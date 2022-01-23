@@ -1,5 +1,22 @@
 #include <dummy.h>
 
+#include "HTTPClient.h"
+#include "mbedtls/md.h"
+#include "credentials.h"
+#include <MQTTClient.h>
+#include <WiFiUdp.h>
+#include <ArduinoJson.h>
+#include <ESPmDNS.h>
+#include <Update.h>
+#include <ArduinoOTA.h>
+#include <HTTPSRedirect.h>
+#include <time.h>
+#include <TimeLib.h>
+
+
+
+int doUpload = 0;
+
 /*
 
   TimeLapseAvi
@@ -66,9 +83,13 @@ struct eprom_data {
 
 
 
+
+
 //#define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE
 #include "esp_log.h"
 #include "esp_camera.h"
+
+
 
 // v98x-WiFiMan
 
@@ -105,7 +126,7 @@ char strftime_buf2[12];
 int file_number = 0;
 bool internet_connected = false;
 struct tm timeinfo;
-time_t now;
+
 
 char *filename ;
 char *stream ;
@@ -157,7 +178,7 @@ uint8_t temp = 0, temp_last = 0;
 unsigned long fileposition = 0;
 uint16_t frame_cnt = 0;
 uint16_t remnant = 0;
-uint32_t length = 0;
+
 uint32_t startms;
 uint32_t elapsedms;
 uint32_t uVideoLen = 0;
@@ -206,21 +227,21 @@ uint8_t uxga_h[2] = {0xB0, 0x04}; // 1200
 
 
 const int avi_header[AVIOFFSET] PROGMEM = {
-  0x52, 0x49, 0x46, 0x46, 0xD8, 0x01, 0x0E, 0x00, 0x41, 0x56, 0x49, 0x20, 0x4C, 0x49, 0x53, 0x54,
-  0xD0, 0x00, 0x00, 0x00, 0x68, 0x64, 0x72, 0x6C, 0x61, 0x76, 0x69, 0x68, 0x38, 0x00, 0x00, 0x00,
-  0xA0, 0x86, 0x01, 0x00, 0x80, 0x66, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00,
-  0x64, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-  0x80, 0x02, 0x00, 0x00, 0xe0, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x4C, 0x49, 0x53, 0x54, 0x84, 0x00, 0x00, 0x00,
-  0x73, 0x74, 0x72, 0x6C, 0x73, 0x74, 0x72, 0x68, 0x30, 0x00, 0x00, 0x00, 0x76, 0x69, 0x64, 0x73,
-  0x4D, 0x4A, 0x50, 0x47, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-  0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0A, 0x00, 0x00, 0x00,
-  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x73, 0x74, 0x72, 0x66,
-  0x28, 0x00, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00, 0x80, 0x02, 0x00, 0x00, 0xe0, 0x01, 0x00, 0x00,
-  0x01, 0x00, 0x18, 0x00, 0x4D, 0x4A, 0x50, 0x47, 0x00, 0x84, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00,
-  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x49, 0x4E, 0x46, 0x4F,
-  0x10, 0x00, 0x00, 0x00, 0x6A, 0x61, 0x6D, 0x65, 0x73, 0x7A, 0x61, 0x68, 0x61, 0x72, 0x79, 0x20,
-  0x76, 0x41, 0x31, 0x20, 0x4C, 0x49, 0x53, 0x54, 0x00, 0x01, 0x0E, 0x00, 0x6D, 0x6F, 0x76, 0x69,
+    0x52, 0x49, 0x46, 0x46, 0xD8, 0x01, 0x0E, 0x00, 0x41, 0x56, 0x49, 0x20, 0x4C, 0x49, 0x53, 0x54,
+    0xD0, 0x00, 0x00, 0x00, 0x68, 0x64, 0x72, 0x6C, 0x61, 0x76, 0x69, 0x68, 0x38, 0x00, 0x00, 0x00,
+    0xA0, 0x86, 0x01, 0x00, 0x80, 0x66, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00,
+    0x64, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x80, 0x02, 0x00, 0x00, 0xe0, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x4C, 0x49, 0x53, 0x54, 0x84, 0x00, 0x00, 0x00,
+    0x73, 0x74, 0x72, 0x6C, 0x73, 0x74, 0x72, 0x68, 0x30, 0x00, 0x00, 0x00, 0x76, 0x69, 0x64, 0x73,
+    0x4D, 0x4A, 0x50, 0x47, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0A, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x73, 0x74, 0x72, 0x66,
+    0x28, 0x00, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00, 0x80, 0x02, 0x00, 0x00, 0xe0, 0x01, 0x00, 0x00,
+    0x01, 0x00, 0x18, 0x00, 0x4D, 0x4A, 0x50, 0x47, 0x00, 0x84, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x49, 0x4E, 0x46, 0x4F,
+    0x10, 0x00, 0x00, 0x00, 0x6A, 0x61, 0x6D, 0x65, 0x73, 0x7A, 0x61, 0x68, 0x61, 0x72, 0x79, 0x20,
+    0x76, 0x41, 0x31, 0x20, 0x4C, 0x49, 0x53, 0x54, 0x00, 0x01, 0x0E, 0x00, 0x6D, 0x6F, 0x76, 0x69,
 };
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -234,20 +255,377 @@ SemaphoreHandle_t aviBaton;
 
 int counter = 0;
 
+
+
+String sha256(const byte* payload, unsigned int len)
+{
+    byte shaResult[32];
+    String r;
+    mbedtls_md_context_t ctx;
+    mbedtls_md_type_t md_type = MBEDTLS_MD_SHA256;
+
+    mbedtls_md_init(&ctx);
+    mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(md_type), 0);
+    mbedtls_md_starts(&ctx);
+    mbedtls_md_update(&ctx, (const unsigned char *) payload, len);
+    mbedtls_md_finish(&ctx, shaResult);
+    mbedtls_md_free(&ctx);
+  
+    for(int i= 0; i< sizeof(shaResult); i++){
+        char str[3];
+
+        sprintf(str, "%02x", (int)shaResult[i]);
+        Serial.print(str);
+        r += String(str);
+    }
+    return r;
+}
+
+
+String hmac256(const byte *key, int keylen, const byte* payload, int len)
+{
+    byte shaResult[32];
+    String r;
+    mbedtls_md_context_t ctx;
+    mbedtls_md_type_t md_type = MBEDTLS_MD_SHA256;
+    mbedtls_md_init(&ctx);
+    mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(md_type), 1);
+    mbedtls_md_hmac_starts(&ctx, key, keylen);
+    mbedtls_md_hmac_update(&ctx, (const unsigned char *) payload, len);
+    mbedtls_md_hmac_finish(&ctx, shaResult);
+    mbedtls_md_free(&ctx);
+  
+    for(int i= 0; i< sizeof(shaResult); i++){
+        char str[3];
+
+        sprintf(str, "%02x", (int)shaResult[i]);
+        r += String(str);
+    }
+
+    return r;
+
+}
+
+void fromHex(String s, byte* b)
+{
+    for (int i = 0; i < 32; i++) {
+        byte c = s.c_str()[2*i];
+        c = c > '9' ? (c -'a' + 10) : (c-'0');
+        byte d = s.c_str()[2*i + 1];
+        d = d > '9' ? (d -'a' + 10) : (d-'0');
+      
+        b[i] = (byte) (c * 16 + d);
+    }
+}
+
+String dateHeader;
+
+String canonicalRequest(String req, String path, const byte payload[], int length) {
+
+    unsigned long t = now();
+
+    char buf1[20];
+
+    sprintf(buf1, "%04d%02d%02dT%02d%02d%02dZ",  year(t),month(t), day(t), hour(t), minute(t), second(t));
+
+    String filename = path;
+  
+    String hash = sha256(payload, length);
+    Serial.println(hash); 
+    dateHeader = buf1;
+  
+    String r = req +"\n"; 
+    r += filename + "\n";		/* CanonicalURI */
+    r += String("\n");		/* CanonicalQueryString */
+    r += String("host:" BUCKET "\n");		/* CanonicalHeaders */
+    r += String("x-amz-content-sha256:") + hash + "\n";
+    r += String( "x-amz-date:") + dateHeader + "\n";
+    r += "\n";
+    r += String("host;x-amz-content-sha256;x-amz-date\n");		/* SignedHeaders */
+    r += sha256(payload, length);
+
+    return r;
+}
+
+String canonicalUnsignedRequest(String req, String path, int length) {
+
+    unsigned long t = now();
+
+    char buf1[20];
+
+    sprintf(buf1, "%04d%02d%02dT%02d%02d%02dZ",  year(t),month(t), day(t), hour(t), minute(t), second(t));
+
+    String filename = path;
+  
+    dateHeader = buf1;
+  
+    String r = req +"\n"; 
+    r += filename + "\n";		/* CanonicalURI */
+    r += String("\n");		/* CanonicalQueryString */
+    r += String("host:" BUCKET "\n");		/* CanonicalHeaders */
+    r += String("x-amz-content-sha256:") + "UNSIGNED-PAYLOAD" + "\n";
+    r += String( "x-amz-date:") + dateHeader + "\n";
+    r += "\n";
+    r += String("host;x-amz-content-sha256;x-amz-date\n");		/* SignedHeaders */
+    r += "UNSIGNED-PAYLOAD";
+
+    return r;
+}
+
+
+
+String toSign(String msg)
+{
+    unsigned long t = now();
+    char buf1[20];
+    char buf2[20];
+    sprintf(buf1, "%04d%02d%02dT%02d%02d%02dZ",  year(t),month(t), day(t), hour(t), minute(t), second(t));
+    sprintf(buf2, "%04d%02d%02d",  year(t),month(t), day(t));
+
+    String sts = "AWS4-HMAC-SHA256\n";
+
+    sts += buf1;
+    sts += "\n";
+  
+    sts += buf2;
+    sts += "/eu-west-2/s3/aws4_request\n"  ;
+    
+    sts += sha256((const byte*)msg.c_str(), strlen(msg.c_str()));
+    return sts;
+  
+}
+
+String signKey()
+{
+    unsigned long t = now();
+    char buf1[20];
+    char buf2[20];
+    sprintf(buf1, "%04d%02d%02dT%02d%02d%02dZ",  year(t),month(t), day(t), hour(t), minute(t), second(t));
+    sprintf(buf2, "%04d%02d%02d",  year(t),month(t), day(t));
+
+    byte h1[32];
+    byte h2[32];
+    byte h3[32];
+    byte h4[32];
+    const char* region = "eu-west-2";
+    const char* service = "s3";
+    const char* req = "aws4_request";
+    char * secret_key = "AWS4" SECRET_KEY;
+    Serial.println(secret_key);
+    String hex1 = hmac256((const byte*)(secret_key), strlen(secret_key), (const byte*)buf2, strlen(buf2));
+    fromHex(hex1, h1);
+    String hex2 = hmac256(h1, 32, (byte*)region, strlen(region));
+    Serial.println(hex2);
+    fromHex(hex2, h2);
+    String hex3 = hmac256(h2, 32, (byte*)service, strlen(service));
+    Serial.println(hex3);
+    fromHex(hex3, h3);
+    return hmac256(h3, 32, (byte*)req, strlen(req));
+}
+
+String sign(String key, String msg) {
+    byte b[32];
+    fromHex(key, b);
+    return hmac256(b, 32, (const byte*) msg.c_str(), msg.length());
+}
+
+String auth(String sig) {
+  
+    unsigned long t = now();
+
+    char buf2[20];
+    sprintf(buf2, "%04d%02d%02d",  year(t),month(t), day(t));
+  
+    String ah = "AWS4-HMAC-SHA256 ";
+    ah += "Credential=" ACCESS_KEY;
+    ah += "/";
+    ah += buf2;
+    ah += "/eu-west-2/s3/aws4_request, ";
+    ah += "SignedHeaders=host;x-amz-content-sha256;x-amz-date, ";
+    ah += "Signature=";
+    ah += sig;
+    return ah;
+}
+
+int put(String path, const byte payload[], int length)
+{
+
+    String can = canonicalRequest(String("PUT"), path, payload, length);
+    String sts = toSign(can);
+    String skey = signKey();
+  
+
+    Serial.print("Can: ");
+    Serial.println(can);
+    Serial.print("String to Sign: ");
+    Serial.println(sts);
+    Serial.print("Signing Key: ");
+    Serial.println(skey);
+    Serial.print("Signed:");
+    Serial.println(sign(skey, sts));
+    HTTPClient http;
+    http.begin(String("http://net.lecomber.cctv.s3.eu-west-2.amazonaws.com") + path);
+    http.addHeader("Authorization", auth(sign(skey, sts)));
+    http.addHeader("x-amz-content-sha256", sha256(payload, length));
+    http.addHeader("x-amz-date", dateHeader);
+    http.sendRequest("PUT", (unsigned char*)payload, length);
+
+    Serial.println(http.getString());
+    return -1;
+    
+}
+
+#define PAYLOAD_MAX 8192
+byte transferBuff[PAYLOAD_MAX];
+
+int put(String path, File payload)
+{
+    size_t bytes_read = 0;
+
+    
+    
+    String can = canonicalUnsignedRequest(String("PUT"), path, payload.size());
+    String sts = toSign(can);
+    String skey = signKey();
+
+    Serial.print("Can: ");
+    Serial.println(can);
+    Serial.print("String to Sign: ");
+    Serial.println(sts);
+    Serial.print("Signing Key: ");
+    Serial.println(skey);
+    Serial.print("Signed:");
+    Serial.println(sign(skey, sts));
+
+    Serial.print("Length: ");
+    Serial.println(payload.size());
+    
+    HTTPClient http;
+    http.begin(String("http://net.lecomber.cctv.s3.eu-west-2.amazonaws.com") + path);
+    http.addHeader("Authorization", auth(sign(skey, sts)));
+    http.addHeader("x-amz-content-sha256", "UNSIGNED-PAYLOAD");
+    http.addHeader("x-amz-date", dateHeader);
+    Serial.println("Sending.. " );
+
+    int r;
+    if (payload.size() > 0) {
+        r = http.sendRequest("PUT", &payload, payload.size());
+    }
+    else {
+        byte dummy[1];
+        r = http.sendRequest("PUT", dummy, 1);
+    }
+    Serial.print("Sent: " );
+    Serial.println(r);
+
+    return -1;
+    
+}
+
+
+
+
+#define SEND_BUF 8192
+byte send_buffer[SEND_BUF];
+
+int uploadFile(File todo)
+{
+    String name = todo.name();
+    Serial.print("Uploading: ");
+    String fullpath = String(name);
+    Serial.println(fullpath);
+
+    String cofile = todo.readStringUntil('\n');
+    /* strip /sdcard/ from front */
+
+    cofile = cofile.substring(strlen("/sdcard"));
+
+    //    int bytes_sent = todo.readStringUntil('\n').toInt();
+
+    
+    File avi = SD_MMC.open(cofile.c_str());
+
+    if (!avi) {
+        Serial.print("Could not open AVI: ");
+        Serial.println(cofile);
+    }
+
+    
+    if (!put(fname, avi)) {
+            /* fail */
+        Serial.println ("failed put");
+        return 0;
+    }
+
+    avi.close();
+    return -1;
+    /* return -1 if completed */
+    /* return 0 if problem */
+}
+
+
+void traverse(File d) {
+    File f;
+    Serial.print("traversing: ");
+    Serial.println(d.name());
+    if (d.isDirectory()) {
+        while (f = d.openNextFile())  {
+            if (!f.isDirectory()) {
+                String name = f.name();
+                if (name.endsWith(".todo")) {
+                    Serial.print("reading..: ");
+                    Serial.println(f.name());
+                    uploading = 1;
+                    if (!uploadFile(f)) {
+                        uploading = 0;
+                        Serial.print("Error uploading ");
+                        Serial.println(name);
+                        return;
+                    }
+
+                    f.close();
+                    SD_MMC.remove(name.c_str());
+                    uploading = 0;
+                    return;
+                }
+                else {
+                    f.close();
+                }
+            }
+            else {
+                traverse(f);
+                f.close();
+            }
+        }
+    }
+    else {
+
+    }
+}
+
+void upload() {
+    
+    /* look for files with " */
+    Serial.println("Upload task ran");
+    File d = SD_MMC.open("/");
+    traverse(d);
+}
+
+
 void codeForAviWriterTask( void * parameter )
 {
-  uint32_t ulNotifiedValue;
-  Serial.print("aviwriter, core ");  Serial.print(xPortGetCoreID());
-  Serial.print(", priority = "); Serial.println(uxTaskPriorityGet(NULL));
+    uint32_t ulNotifiedValue;
+    Serial.print("aviwriter, core ");  Serial.print(xPortGetCoreID());
+    Serial.print(", priority = "); Serial.println(uxTaskPriorityGet(NULL));
 
-  for (;;) {
-    ulNotifiedValue = ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    while (ulNotifiedValue-- > 0)  {
-      make_avi();
-      count_avi++;
-      delay(1);
+    for (;;) {
+        ulNotifiedValue = ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        while (ulNotifiedValue-- > 0)  {
+            make_avi();
+            count_avi++;
+            delay(1);
+        }
     }
-  }
 }
 
 
@@ -258,117 +636,123 @@ void codeForAviWriterTask( void * parameter )
 
 void codeForCameraTask( void * parameter )
 {
-  int pic_delay = 0;
-  int next = 0;
-  long next_run_time = 0;
-  Serial.print("camera, core ");  Serial.print(xPortGetCoreID());
-  Serial.print(", priority = "); Serial.println(uxTaskPriorityGet(NULL));
+    int pic_delay = 0;
+    int next = 0;
+    long next_run_time = 0;
+    Serial.print("camera, core ");  Serial.print(xPortGetCoreID());
+    Serial.print(", priority = "); Serial.println(uxTaskPriorityGet(NULL));
 
-  for (;;) {
+    for (;;) {
 
-    if (other_cpu_active == 1 ) {
-      current_millis = millis();
-      count_cam++;
-      xSemaphoreTake( baton, portMAX_DELAY );
+        if (other_cpu_active == 1 ) {
+            current_millis = millis();
+            count_cam++;
+            xSemaphoreTake( baton, portMAX_DELAY );
 
-      int q_size = (fb_in + fb_max - fb_out) % fb_max ;
+            int q_size = (fb_in + fb_max - fb_out) % fb_max ;
 
-      if ( q_size + 1 == fb_max) {
-        xSemaphoreGive( baton );
+            if ( q_size + 1 == fb_max) {
+                xSemaphoreGive( baton );
 
-        Serial.print(" Queue Full, Skipping ... ");  // the queue is full
-        skipped++; skipped++;
-        skipping = 1;
-        next = 3 * capture_interval;
+                Serial.print(" Queue Full, Skipping ... ");  // the queue is full
+                skipped++; skipped++;
+                skipping = 1;
+                next = 3 * capture_interval;
 
-      } else {
-        frames_so_far++;
-        frame_cnt++;
-
-        fb_in = (fb_in + 1) % fb_max;
-        bp = millis();
-
-        //fb_q[fb_in] = esp_camera_fb_get();
-        //Serial.print (fb_q[fb_out]->buf[fblen-2],HEX );  Serial.print(":");
-        //Serial.print (fb_q[fb_out]->buf[fblen-1],HEX );  //Serial.print(":");
-
-        do {
-          fb_q[fb_in] = esp_camera_fb_get();
-          int x = fb_q[fb_in]->len;
-          int foundffd9 = 0;
-          //if (fb_q[fb_in]->buf[x - 1] != 0xD9) {
-
-          for (int j = 1; j <= 1025; j++) {
-            if (fb_q[fb_in]->buf[x - j] != 0xD9) {
-              // no d9, try next for
             } else {
+                frames_so_far++;
+                frame_cnt++;
 
-              //Serial.println("Found a D9");
-              if (fb_q[fb_in]->buf[x - j - 1] == 0xFF ) {
-                //Serial.print("Found the FFD9, junk is "); Serial.println(j);
-                if (j == 1) {
-                  normal_jpg++;
+                fb_in = (fb_in + 1) % fb_max;
+                bp = millis();
+
+                //fb_q[fb_in] = esp_camera_fb_get();
+                //Serial.print (fb_q[fb_out]->buf[fblen-2],HEX );  Serial.print(":");
+                //Serial.print (fb_q[fb_out]->buf[fblen-1],HEX );  //Serial.print(":");
+
+                do {
+
+
+
+                    fb_q[fb_in] = esp_camera_fb_get();
+                    int x = fb_q[fb_in]->len;
+                    int foundffd9 = 0;
+                    //if (fb_q[fb_in]->buf[x - 1] != 0xD9) {
+
+                    for (int j = 1; j <= 1025; j++) {
+                        if (fb_q[fb_in]->buf[x - j] != 0xD9) {
+                            // no d9, try next for
+                        } else {
+
+                            //Serial.println("Found a D9");
+                            if (fb_q[fb_in]->buf[x - j - 1] == 0xFF ) {
+                                //Serial.print("Found the FFD9, junk is "); Serial.println(j);
+                                if (j == 1) {
+                                    normal_jpg++;
+                                } else {
+                                    extend_jpg++;
+                                }
+                                if (j > 1000) { //  never happens. but > 1 does, usually 400-500
+                                    Serial.print("Frame "); Serial.print(frames_so_far);
+                                    Serial.print(", Len = "); Serial.print(x);
+                                    Serial.print(", Corrent Len = "); Serial.print(x - j + 1);
+                                    Serial.print(", Extra Bytes = "); Serial.println( j - 1);
+                                }
+                                foundffd9 = 1;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (!foundffd9) {
+                        bad_jpg++;
+                        Serial.print("Bad jpeg, Len = "); Serial.println(x);
+                        esp_camera_fb_return(fb_q[fb_in]);
+
+                    } else {
+                        break;
+                        // count up the useless bytes
+                    }
+
+                } while (1);
+
+                totalp = totalp - bp + millis();
+                pic_delay = millis() - current_millis;
+                xSemaphoreGive( baton );
+                last_capture_millis = millis();
+
+                if (q_size == 0) {
+                    if (skipping == 1) {
+                        Serial.println(" Queue cleared. ");
+                        skipping = 0;
+                    }
+                    next = capture_interval - pic_delay;
+                    if (next < 2) next = 2;
+                } else if (q_size < 2 ) {
+                    next = capture_interval - pic_delay;
+                    if (next < 2) next = 2;
+                } else if (q_size < 4 ) {
+                    next =  capture_interval ;
                 } else {
-                  extend_jpg++;
+                    next = 2 * capture_interval;
+                    skipped++;
+                    //Serial.print(((fb_in + fb_max - fb_out) % fb_max));
                 }
-                if (j > 1000) { //  never happens. but > 1 does, usually 400-500
-                  Serial.print("Frame "); Serial.print(frames_so_far);
-                  Serial.print(", Len = "); Serial.print(x);
-                  Serial.print(", Corrent Len = "); Serial.print(x - j + 1);
-                  Serial.print(", Extra Bytes = "); Serial.println( j - 1);
-                }
-                foundffd9 = 1;
-                break;
-              }
             }
-          }
 
-          if (!foundffd9) {
-            bad_jpg++;
-            Serial.print("Bad jpeg, Len = "); Serial.println(x);
-            esp_camera_fb_return(fb_q[fb_in]);
+            BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+            vTaskNotifyGiveFromISR(AviWriterTask, &xHigherPriorityTaskWoken);
 
-          } else {
-            break;
-            // count up the useless bytes
-          }
 
-        } while (1);
 
-        totalp = totalp - bp + millis();
-        pic_delay = millis() - current_millis;
-        xSemaphoreGive( baton );
-        last_capture_millis = millis();
 
-        if (q_size == 0) {
-          if (skipping == 1) {
-            Serial.println(" Queue cleared. ");
-            skipping = 0;
-          }
-          next = capture_interval - pic_delay;
-          if (next < 2) next = 2;
-        } else if (q_size < 2 ) {
-          next = capture_interval - pic_delay;
-          if (next < 2) next = 2;
-        } else if (q_size < 4 ) {
-          next =  capture_interval ;
+            delay(next);
+            next_run_time = millis() + next;
         } else {
-          next = 2 * capture_interval;
-          skipped++;
-          //Serial.print(((fb_in + fb_max - fb_out) % fb_max));
+            next_run_time = millis() + capture_interval;
+            delay(capture_interval);
         }
-      }
-
-      BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-      vTaskNotifyGiveFromISR(AviWriterTask, &xHigherPriorityTaskWoken);
-
-      delay(next);
-      next_run_time = millis() + next;
-    } else {
-      next_run_time = millis() + capture_interval;
-      delay(capture_interval);
     }
-  }
 
 }
 
@@ -378,8 +762,8 @@ void codeForCameraTask( void * parameter )
 //
 static void inline print_quartet(unsigned long i, FILE * fd)
 {
-  uint8_t y[4];
-  //uint8_t x[1];
+    uint8_t y[4];
+//uint8_t x[1];
 
   y[0] = i % 0x100;
   y[1] = (i >> 8) % 0x100;
@@ -419,7 +803,7 @@ static void IRAM_ATTR PIR_ISR(void* arg) {
 
           total_frames = total_frames + 10000 / capture_interval ;
           //Serial.print("PIR frames = "); Serial.println(total_frames);
-          Serial.print("#");
+          Serial.print("*");
           //Serial.println("Add another 10 seconds");
         }
 
@@ -766,10 +1150,21 @@ void do_eprom_write() {
 
 
 void codeForUploadTask(void *parameter) {
-    
+    Serial.print("UploadTask running on core ");
+    Serial.println(xPortGetCoreID());
+
     for (;;) {
+        
+
         do_time();
-        delay(10000);
+        if (WiFi.status() == WL_CONNECTED) {
+            Serial.println("Wifi - will attempt upload");
+            upload();
+        }
+        else {
+            Serial.println("No wifi - skipping upload");
+        }
+        delay(60 * 1000);
     }
 }
 
@@ -793,6 +1188,10 @@ void setup() {
     pinMode(4, OUTPUT);               // Blinding Disk-Avtive Light
     digitalWrite(4, LOW);             // turn off
 
+    pinMode(GPIO_NUM_12, OUTPUT);
+    digitalWrite(GPIO_NUM_12, HIGH);
+
+    
     Serial.setDebugOutput(true);
     Serial.print("setup, core ");  Serial.print(xPortGetCoreID());
     Serial.print(", priority = "); Serial.println(uxTaskPriorityGet(NULL));
@@ -821,6 +1220,8 @@ void setup() {
 
     Serial.println("Starting sd card ...");
     // SD camera init
+
+    
     card_err = init_sdcard();
     if (card_err != ESP_OK) {
         Serial.printf("SD Card init failed with error 0x%x", card_err);
@@ -927,7 +1328,15 @@ void major_fail() {
     ESP.restart();
 }
 
-
+void printLocalTime()
+{
+  struct tm timeinfo;
+  if(!getLocalTime(&timeinfo)){
+    Serial.println("Failed to obtain time");
+    return;
+  }
+  Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
+}
 bool init_wifi()
 {
     int connAttempts = 0;
@@ -998,23 +1407,28 @@ bool init_wifi()
         setenv("TZ", TIMEZONE, 1);  // mountain time zone from #define at top
         tzset();
 
-        time_t now ;
         timeinfo = { 0 };
         int retry = 0;
-        const int retry_count = 15;
+        const int retry_count = 30;
         delay(1000);
-        time(&now);
-        localtime_r(&now, &timeinfo);
 
-        while (timeinfo.tm_year < (2016 - 1900) && ++retry < retry_count) {
-            Serial.printf("Waiting for system time to be set... (%d/%d) -- %d\n", retry, retry_count, timeinfo.tm_year);
-            delay(1000);
-            time(&now);
-            localtime_r(&now, &timeinfo);
-        }
-
-        Serial.print("Local time: "); Serial.println(ctime(&now));
+        time_t n = now();
+        localtime_r(&n, &timeinfo);
+        Serial.print("Local time: "); Serial.println(ctime(&n));
         sprintf(localip, "%s", WiFi.localIP().toString().c_str());
+
+        while(time(nullptr) < 100000) {
+            Serial.print(".");
+            delay(100);
+        }
+        printLocalTime();
+        setTime(time(nullptr));
+        unsigned long t = now();
+        
+        char buf1[20];
+
+        sprintf(buf1, "%04d%02d%02dT%02d%02d%02dZ",  year(t),month(t), day(t), hour(t), minute(t), second(t));
+        Serial.println(buf1);
     }
 
     //typedef enum {
@@ -1040,18 +1454,15 @@ bool init_wifi()
     WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, brown_reg_temp); //enable brownout detector
 
 
-
-
     return true;
 }
 
 
+
+
 static esp_err_t init_sdcard()
 {
-
-    //pinMode(12, PULLUP);
-    pinMode(13, PULLUP);
-    //pinMode(4, OUTPUT);
+    pinMode(GPIO_NUM_13, INPUT_PULLUP);
 
     esp_err_t ret = ESP_FAIL;
     sdmmc_host_t host = SDMMC_HOST_DEFAULT();
@@ -1086,10 +1497,10 @@ static esp_err_t init_sdcard()
         }
     }
     sdmmc_card_print_info(stdout, card);
-    Serial.print("SD_MMC Begin: "); Serial.println(SD_MMC.begin());   // required by ftp system ??
+    Serial.print("SD_MMC Begin: ");
+    Serial.println(SD_MMC.begin());   // required by ftp system ??
+    pinMode(GPIO_NUM_13, INPUT_PULLDOWN);
     return ret;
-    //pinMode(13, PULLDOWN);
-    //pinMode(13, INPUT_PULLDOWN);
 }
 
 
@@ -1120,7 +1531,7 @@ void make_avi( ) {
 
                     total_frames = total_frames + 10000 / capture_interval ;
                     //Serial.print("Make PIR frames = "); Serial.println(total_frames);
-                    Serial.print("@");
+                    Serial.print(".");
                     //Serial.println("Add another 10 seconds");
                 }
 
@@ -1143,6 +1554,7 @@ void make_avi( ) {
     // we are recording, but no file is open
 
     if (newfile == 0 && recording == 1) {                                     // open the file
+        digitalWrite(GPIO_NUM_12, HIGH);
 
         digitalWrite(33, HIGH);
         newfile = 1;
@@ -1290,11 +1702,21 @@ static void start_avi() {
     //plm print_ram();
 
     //89 config_camera();
+    time_t n = now();
+    bool fixTime = false; 
+    if (time(nullptr) < 100000) {
+        /* still 1970.. */
+        fixTime = true;
+    }
 
-    time(&now);
-    localtime_r(&now, &timeinfo);
 
-    strftime(strftime_buf2, sizeof(strftime_buf2), "/%Y%m%d", &timeinfo);
+    localtime_r(&n, &timeinfo);
+    if (!fixTime) {
+        strftime(strftime_buf2, sizeof(strftime_buf2), "/%Y%m%d", &timeinfo);
+    }
+    else {
+        snprintf(strftime_buf2, sizeof(strftime_buf2), "/%08d", bootCount);
+    }
     SD_MMC.mkdir(strftime_buf2);
 
     strftime(strftime_buf, sizeof(strftime_buf), "%F_%H.%M.%S", &timeinfo);
@@ -1635,6 +2057,15 @@ static void end_avi() {
     fclose(avifile);
     int xx = remove("/sdcard/idx.tmp");
 
+    String fname_status = fname;
+    fname_status =     fname_status + String(".todo");
+    
+    FILE* f = fopen(fname_status.c_str(), "w");
+    fwrite(fname, 1, strlen(fname), f);
+    fwrite("\n0\n", 1, 3, f);
+    fclose(f);
+
+    
     Serial.println("---");
 
 }
@@ -1706,6 +2137,7 @@ void loop()
       if (recording == 0 && PIRenabled == 1 && uploading == 0) {
 
           Serial.println("Going to sleep now");
+          digitalWrite(GPIO_NUM_12, LOW);
 
           pinMode(4, OUTPUT);
           digitalWrite(4, LOW);
