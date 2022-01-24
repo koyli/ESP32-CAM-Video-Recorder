@@ -13,6 +13,8 @@
 #include <time.h>
 #include <TimeLib.h>
 
+#define RED_LIGHT_PIN GPIO_NUM_33
+#define WHITE_LIGHT_PIN GPIO_NUM_4
 
 
 int doUpload = 0;
@@ -67,7 +69,7 @@ struct eprom_data {
   int Internet_Enabled;
   int DeepSleepPir;
   int record_on_reboot;
-  int PIRpin;
+    gpio_num_t PIRpin;
   int PIRenabled;
   int  framesize;
   int  repeat;
@@ -512,11 +514,11 @@ int put(String path, File payload)
         r = http.sendRequest("PUT", &payload, payload.size());
     }
     else {
-        byte dummy[1];
-        r = http.sendRequest("PUT", dummy, 1);
+        //        r = http.sendRequest("PUT", dummy, 1);
+        r = 200;
     }
-    Serial.print("Sent: " );
-    Serial.println(r);
+    Serial.print("File sent: ");
+    Serial.println(path);
 
     return -1;
     
@@ -673,6 +675,7 @@ void codeForCameraTask( void * parameter )
                 do {
 
 
+                    digitalWrite(GPIO_NUM_13, HIGH);
 
                     fb_q[fb_in] = esp_camera_fb_get();
                     int x = fb_q[fb_in]->len;
@@ -742,7 +745,6 @@ void codeForCameraTask( void * parameter )
 
             BaseType_t xHigherPriorityTaskWoken = pdFALSE;
             vTaskNotifyGiveFromISR(AviWriterTask, &xHigherPriorityTaskWoken);
-
 
 
 
@@ -879,7 +881,7 @@ void do_blink() {
   // pwm channel 5, 5000 freq, 8 bit resolution, dutycycle 7, gpio 4
 
   ledcSetup(5, 5000, 8 );
-  ledcAttachPin(4, 5);
+  ledcAttachPin(WHITE_LIGHT_PIN, 5);
   ledcWrite( 5, 7);
 }
 
@@ -891,10 +893,10 @@ void do_blink_short() {
   timerAlarmWrite(timer, 20, false);
   timerAlarmEnable(timer);
 
-  // pwm channel 5, 5000 freq, 8 bit resolution, dutycycle 1, gpio 4
+  // pwm channel 5, 5000 freq, 8 bit resolution, dutycycle 1, gpio WHITE_LIGHT_PIN
 
   ledcSetup(5, 5000, 8 );
-  ledcAttachPin(4, 5);
+  ledcAttachPin(WHITE_LIGHT_PIN, 5);
   ledcWrite( 5, 1);
 }
 
@@ -1180,16 +1182,18 @@ void setup() {
     Serial.begin(115200);
     Serial.println("\n\n---");
 
-    rtc_gpio_hold_dis(GPIO_NUM_33);
-    pinMode(33, OUTPUT);             // little red led on back of chip
-    digitalWrite(33, LOW);           // turn on the red LED on the back of chip
+    rtc_gpio_hold_dis(RED_LIGHT_PIN);
 
-    rtc_gpio_hold_dis(GPIO_NUM_4);
-    pinMode(4, OUTPUT);               // Blinding Disk-Avtive Light
-    digitalWrite(4, LOW);             // turn off
+    pinMode(RED_LIGHT_PIN, OUTPUT);             // little red led on back of chip
+    digitalWrite(RED_LIGHT_PIN, LOW);           // turn on the red LED on the back of chip
 
-    pinMode(GPIO_NUM_12, OUTPUT);
-    digitalWrite(GPIO_NUM_12, HIGH);
+    rtc_gpio_hold_dis(WHITE_LIGHT_PIN);
+    pinMode(WHITE_LIGHT_PIN, OUTPUT);               // Blinding Disk-Avtive Light
+    digitalWrite(WHITE_LIGHT_PIN, LOW);             // turn off
+
+    rtc_gpio_hold_dis(GPIO_NUM_13);
+    //pinMode(GPIO_NUM_13, OUTPUT);
+    //digitalWrite(GPIO_NUM_13, HIGH);
 
     
     Serial.setDebugOutput(true);
@@ -1223,6 +1227,10 @@ void setup() {
 
     
     card_err = init_sdcard();
+    pinMode(GPIO_NUM_13, OUTPUT);
+    digitalWrite(GPIO_NUM_13, HIGH);
+
+
     if (card_err != ESP_OK) {
         Serial.printf("SD Card init failed with error 0x%x", card_err);
         major_fail();
@@ -1286,7 +1294,7 @@ void setup() {
     //plm print_ram();  delay(2000);
 
     ready = 1;
-    digitalWrite(33, HIGH);         // red light turns off when setup is complete
+    digitalWrite(RED_LIGHT_PIN, HIGH);         // red light turns off when setup is complete
 
     Serial.print(WiFi.localIP());
     Serial.println("' to connect");
@@ -1310,15 +1318,15 @@ void major_fail() {
 
     for  (int i = 0;  i < 10; i++) {                 // 10 loops or about 100 seconds then reboot
         for (int j = 0; j < 3; j++) {
-            digitalWrite(33, LOW);   delay(150);
-            digitalWrite(33, HIGH);  delay(150);
+            digitalWrite(RED_LIGHT_PIN, LOW);   delay(150);
+            digitalWrite(RED_LIGHT_PIN, HIGH);  delay(150);
         }
 
         delay(1000);
 
         for (int j = 0; j < 3; j++) {
-            digitalWrite(33, LOW);  delay(500);
-            digitalWrite(33, HIGH); delay(500);
+            digitalWrite(RED_LIGHT_PIN, LOW);  delay(500);
+            digitalWrite(RED_LIGHT_PIN, HIGH); delay(500);
         }
 
         delay(1000);
@@ -1379,6 +1387,8 @@ bool init_wifi()
         while (WiFi.status() != WL_CONNECTED ) {
             delay(1000);
             Serial.print(".");
+            digitalWrite(GPIO_NUM_13, HIGH);
+            
             if (connAttempts == 20 ) {
                 Serial.println("Cannot connect - try again");
                 WiFi.begin(ssid, password);
@@ -1394,6 +1404,8 @@ bool init_wifi()
 
         Serial.println("\nInternet connected");
     }
+    
+    setTime(time(nullptr));
 
     if (!InternetFailed) {
         if (!MDNS.begin(devname)) {
@@ -1554,9 +1566,9 @@ void make_avi( ) {
     // we are recording, but no file is open
 
     if (newfile == 0 && recording == 1) {                                     // open the file
-        digitalWrite(GPIO_NUM_12, HIGH);
+        digitalWrite(GPIO_NUM_13, HIGH);
 
-        digitalWrite(33, HIGH);
+        digitalWrite(RED_LIGHT_PIN, HIGH);
         newfile = 1;
 
         Serial.println(" ");
@@ -1571,7 +1583,7 @@ void make_avi( ) {
 
         if (newfile == 1 && recording == 0) {                                  // got command to close file
 
-            digitalWrite(33, LOW);
+            digitalWrite(RED_LIGHT_PIN, LOW);
             end_avi();
 
             Serial.println("Done capture due to command");
@@ -1593,7 +1605,7 @@ void make_avi( ) {
                     Serial.print("Config:       "); Serial.print(total_frames * capture_interval ) ; Serial.print(" (");
                     Serial.print(total_frames); Serial.print(" x "); Serial.print(capture_interval);  Serial.println(")");
 
-                    digitalWrite(33, LOW);                                                       // close the file
+                    digitalWrite(RED_LIGHT_PIN, LOW);                                                       // close the file
 
                     end_avi();
 
@@ -1702,14 +1714,18 @@ static void start_avi() {
     //plm print_ram();
 
     //89 config_camera();
-    time_t n = now();
+    time_t n = time(nullptr);
     bool fixTime = false; 
     if (time(nullptr) < 100000) {
         /* still 1970.. */
         fixTime = true;
     }
 
-
+    Serial.print("Fixtime: ");
+    Serial.println(fixTime);
+    Serial.println(time(nullptr));
+    Serial.println(now());
+    
     localtime_r(&n, &timeinfo);
     if (!fixTime) {
         strftime(strftime_buf2, sizeof(strftime_buf2), "/%Y%m%d", &timeinfo);
@@ -1878,7 +1894,7 @@ static void another_save_avi() {
         //xSemaphoreGive( baton );
 
         if (BlinkWithWrite) {
-            digitalWrite(33, LOW);
+            digitalWrite(RED_LIGHT_PIN, LOW);
         }
 
         jpeg_size = fblen;
@@ -1944,7 +1960,7 @@ static void another_save_avi() {
 
         totalw = totalw + millis() - bw;
 
-        digitalWrite(33, HIGH);
+        digitalWrite(RED_LIGHT_PIN, HIGH);
 
     }
 } // end of another_pic_avi
@@ -2058,7 +2074,8 @@ static void end_avi() {
     int xx = remove("/sdcard/idx.tmp");
 
     String fname_status = fname;
-    fname_status =     fname_status + String(".todo");
+
+    fname_status = fname_status + String(".todo");
     
     FILE* f = fopen(fname_status.c_str(), "w");
     fwrite(fname, 1, strlen(fname), f);
@@ -2137,16 +2154,17 @@ void loop()
       if (recording == 0 && PIRenabled == 1 && uploading == 0) {
 
           Serial.println("Going to sleep now");
-          digitalWrite(GPIO_NUM_12, LOW);
+          digitalWrite(GPIO_NUM_13, LOW);
+          gpio_hold_en(GPIO_NUM_13);
 
-          pinMode(4, OUTPUT);
-          digitalWrite(4, LOW);
-          rtc_gpio_hold_en(GPIO_NUM_4);
+          pinMode(WHITE_LIGHT_PIN, OUTPUT);
+          digitalWrite(WHITE_LIGHT_PIN, LOW);
+          rtc_gpio_hold_en(WHITE_LIGHT_PIN);
           gpio_deep_sleep_hold_en();
-          digitalWrite(33, HIGH);
-          //rtc_gpio_hold_en(GPIO_NUM_33);
+          digitalWrite(RED_LIGHT_PIN, HIGH);
+          //rtc_gpio_hold_en(RED_LIGHT_PIN);
 
-          esp_sleep_enable_ext0_wakeup(GPIO_NUM_13, 0);
+          esp_sleep_enable_ext0_wakeup(PIRpin, 0);
           delay(500);
           esp_deep_sleep_start();
       }

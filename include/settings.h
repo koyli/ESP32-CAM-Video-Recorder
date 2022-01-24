@@ -13,7 +13,7 @@ int delete_old_files = 1;       // set to 1 and it will delete your oldest day o
 
 // 1 for blink red led with every sd card write, at your frame rate
 // 0 for blink only for skipping frames and SOS if camera or sd is broken
-#define BlinkWithWrite 1
+#define BlinkWithWrite 0
 
 // EDIT ssid and password   **** with Version 98x-WiFiMan, you are using WiFiManager to set ssid and password, so these are redundant
 const char* ssid = "j"; //zjzjzjz";
@@ -24,10 +24,10 @@ const char* password = "mrpeanut";
 int Internet_Enabled = 1;          // set to 0 to shut off all internet activities - wifi, time, http, ftp, telegram
 int DeepSleepPir  = 1;             // set to 1 to deepsleep between pir videos
 int record_on_reboot = 0;          // set to 1 to record, or 0 to NOT record on reboot
-int PIRpin = 13;                   // for active high pir or microwave etc
+gpio_num_t PIRpin = (gpio_num_t) 12;                   // for active high pir or microwave etc
 int PIRenabled = 1;                // 1 is PIR is enable on reboot, will only work if you are not recording
 
-int MagicNumber = 03;             // change this if you are re-compiling and you dont want to use the ESPROM settings
+int MagicNumber = 04;             // change this if you are re-compiling and you dont want to use the ESPROM settings
 int stream_interval = 333;         // milliseconds between frames delivered during the live stream - 333 is 3 fps
 
 // here are 2 sets of startup parameters -- more down in the stop and restart webpage
