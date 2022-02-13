@@ -788,6 +788,9 @@ WiFiEventId_t eventID;
 //
 //  PIR_ISR - interupt handler for PIR  - starts or extends a video
 //
+#define MAX_FRAMES (10 * 30)
+
+
 static void IRAM_ATTR PIR_ISR(void* arg) {
 
   PIRstatus = digitalRead(PIRpin) + digitalRead(PIRpin) + digitalRead(PIRpin) ;
@@ -799,7 +802,8 @@ static void IRAM_ATTR PIR_ISR(void* arg) {
       if (PIRrecording == 1) {
         // keep recording for 15 more seconds
 
-        if ( (millis() - startms) > (total_frames * capture_interval - 5000)  ) {
+        if ( (millis() - startms) > (total_frames * capture_interval - 5000) &&
+             total_frames < MAX_FRAMES) {
 
           total_frames = total_frames + 10000 / capture_interval ;
           //Serial.print("PIR frames = "); Serial.println(total_frames);
@@ -1418,7 +1422,7 @@ bool init_wifi()
         sprintf(localip, "%s", WiFi.localIP().toString().c_str());
 
         while(time(nullptr) < 100000) {
-            Serial.print(".");
+            Serial.print("t");
             delay(100);
         }
         printLocalTime();
@@ -1525,13 +1529,16 @@ void make_avi( ) {
         //Serial.print("Mak>> "); Serial.println(PIRstatus);
         if (PIRstatus == 0) {
 
+
             if (PIRrecording == 1) {
                 // keep recording for 15 more seconds
-                if ( (millis() - startms) > (total_frames * capture_interval - 5000)  ) {
+                if ( (millis() - startms) > (total_frames * capture_interval - 5000)
+                     &&
+                     total_frames < MAX_FRAMES) {
 
                     total_frames = total_frames + 10000 / capture_interval ;
                     //Serial.print("Make PIR frames = "); Serial.println(total_frames);
-                    Serial.print(".");
+                    Serial.print("+");
                     //Serial.println("Add another 10 seconds");
                 }
 
