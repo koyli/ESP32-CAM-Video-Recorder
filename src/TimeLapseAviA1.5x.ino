@@ -1160,7 +1160,7 @@ void codeForUploadTask(void *parameter) {
 
         do_time();
         if (WiFi.status() == WL_CONNECTED) {
-            Serial.println("Wifi - will attempt upload");
+            Serial.println("Wifi connected - will attempt upload");
             upload();
         }
         else {
@@ -1328,7 +1328,6 @@ void major_fail() {
             digitalWrite(RED_LIGHT_PIN, LOW);  delay(500);
             digitalWrite(RED_LIGHT_PIN, HIGH); delay(500);
         }
-
         delay(1000);
         Serial.print("Major Fail  "); Serial.print(i); Serial.print(" / "); Serial.println(10);
     }
@@ -1345,8 +1344,10 @@ void printLocalTime()
   }
   Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
 }
+
 bool init_wifi()
 {
+    Serial.println("Initializing Wifi");
     int connAttempts = 0;
 
     Serial.println(" Disable brownout");
@@ -1356,6 +1357,7 @@ bool init_wifi()
 
     if (strlen(ssid) == 1) {
 
+        Serial.println("Using WM - go configure - if you haven't yet!");
         WiFiManager wm;
         bool res;
         //wm.resetSettings();  // for debugging
@@ -1384,9 +1386,10 @@ bool init_wifi()
         //WiFi.printDiag(Serial);
         WiFi.begin(ssid, password);
 
+        Serial.println("Connecting to WiFi:")
         while (WiFi.status() != WL_CONNECTED ) {
             delay(1000);
-            Serial.print(".");
+            Serial.print("c");
             digitalWrite(GPIO_NUM_13, HIGH);
             
             if (connAttempts == 20 ) {
@@ -1443,14 +1446,6 @@ bool init_wifi()
         Serial.println(buf1);
     }
 
-    //typedef enum {
-    //    WIFI_PS_NONE,        /**< No power save */
-    //    WIFI_PS_MIN_MODEM,   /**< Minimum modem power saving. In this mode, station wakes up to receive beacon every DTIM period */
-    //    WIFI_PS_MAX_MODEM,   /**< Maximum modem power saving. In this mode, interval to receive beacons is determined by the listen_interval
-    //                              parameter in wifi_sta_config_t.
-    //                              Attention: Using this option may cause ping failures. Not recommended */
-    //} wifi_ps_type_t;
-
     wifi_ps_type_t the_type;
 
     esp_err_t get_ps = esp_wifi_get_ps(&the_type);
@@ -1474,6 +1469,7 @@ bool init_wifi()
 
 static esp_err_t init_sdcard()
 {
+    Serial.println("Initializing SD Card");
     pinMode(GPIO_NUM_13, INPUT_PULLUP);
 
     esp_err_t ret = ESP_FAIL;
@@ -1543,7 +1539,7 @@ void make_avi( ) {
 
                     total_frames = total_frames + 10000 / capture_interval ;
                     //Serial.print("Make PIR frames = "); Serial.println(total_frames);
-                    Serial.print(".");
+                    Serial.print("s");
                     //Serial.println("Add another 10 seconds");
                 }
 
