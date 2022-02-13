@@ -3,7 +3,7 @@
 #include "HTTPClient.h"
 #include "mbedtls/md.h"
 #include "credentials.h"
-#include <MQTTClient.h>
+
 #include <WiFiUdp.h>
 #include <ArduinoJson.h>
 #include <ESPmDNS.h>
@@ -15,6 +15,8 @@
 
 #define RED_LIGHT_PIN GPIO_NUM_33
 #define WHITE_LIGHT_PIN GPIO_NUM_4
+
+#define PIR_PIN GPIO_NUM_12                   // for active high pir or microwave etc
 
 
 int doUpload = 0;
@@ -69,8 +71,7 @@ struct eprom_data {
   int Internet_Enabled;
   int DeepSleepPir;
   int record_on_reboot;
-    gpio_num_t PIRpin;
-  int PIRenabled;
+    int PIRenabled;
   int  framesize;
   int  repeat;
   int  xspeed;
@@ -79,7 +80,6 @@ struct eprom_data {
   int  capture_interval;
   int  total_frames;
   int  xlength;
-  int EnableBOT;
 
 };
 
@@ -93,8 +93,6 @@ struct eprom_data {
 
 
 
-// v98x-WiFiMan
-
 
 #include <WiFi.h>
 #include <WiFiManager.h>
@@ -103,7 +101,6 @@ bool InternetFailed = false;
 
 int diskspeed = 0;
 char fname[130];
-int Wait_for_bot = 0;
 
 #include <ESPmDNS.h>
 
@@ -795,7 +792,7 @@ WiFiEventId_t eventID;
 
 static void IRAM_ATTR PIR_ISR(void* arg) {
 
-  PIRstatus = digitalRead(PIRpin) + digitalRead(PIRpin) + digitalRead(PIRpin) ;
+    PIRstatus = digitalRead(PIR_PIN);
   //Serial.print("PIR Interupt>> "); Serial.println(PIRstatus);
 
   //do_blink_short();
@@ -843,18 +840,18 @@ static void IRAM_ATTR PIR_ISR(void* arg) {
 
 static void setupinterrupts() {
 
-  pinMode(PIRpin, INPUT_PULLDOWN);
+  pinMode(PIR_PIN, INPUT_PULLDOWN);
 
-  Serial.print("PIRpin = ");
+  Serial.print("PIR_PIN = ");
   for (int i = 0; i < 5; i++) {
-    Serial.print( digitalRead(PIRpin) ); Serial.print(", ");
+    Serial.print( digitalRead(PIR_PIN) ); Serial.print(", ");
   }
   Serial.println(" ");
 
-  esp_err_t err = gpio_isr_handler_add((gpio_num_t)PIRpin, &PIR_ISR, NULL);
+  esp_err_t err = gpio_isr_handler_add((gpio_num_t)PIR_PIN, &PIR_ISR, NULL);
 
   if (err != ESP_OK) Serial.printf("gpio_isr_handler_add failed (%x)", err);
-  gpio_set_intr_type((gpio_num_t)PIRpin, GPIO_INTR_ANYEDGE);
+  gpio_set_intr_type((gpio_num_t)PIR_PIN, GPIO_INTR_ANYEDGE);
 
   Serial.println(" ");
 }
@@ -1102,7 +1099,6 @@ void do_eprom_read() {
     Internet_Enabled = ed.Internet_Enabled; Serial.print("Internet_Enabled "); Serial.println(Internet_Enabled );
     DeepSleepPir  = ed.DeepSleepPir; Serial.print("DeepSleepPir "); Serial.println(DeepSleepPir );
     record_on_reboot = ed.record_on_reboot; Serial.print("record_on_reboot "); Serial.println(record_on_reboot );
-    PIRpin = ed.PIRpin; Serial.print("PIRpin "); Serial.println(PIRpin );
     PIRenabled = ed.PIRenabled; Serial.print("PIRenabled "); Serial.println(PIRenabled );
     framesize = ed.framesize; Serial.print("framesize "); Serial.println(framesize );
     repeat_config = ed.repeat; Serial.print("repeat_config "); Serial.println(repeat_config );
@@ -1114,7 +1110,6 @@ void do_eprom_read() {
     total_frames = ed.total_frames;
     total_frames_config = ed.total_frames; Serial.print("total_frames_config "); Serial.println(total_frames_config );
     xlength = ed.xlength; Serial.print("xlength "); Serial.println(xlength );
-    EnableBOT = ed.EnableBOT; Serial.print("EnableBOT "); Serial.println(EnableBOT );
   } else {
     Serial.println("No settings in EPROM - putting in hardcoded settings ");
     do_eprom_write();
@@ -1131,7 +1126,6 @@ void do_eprom_write() {
   ed.Internet_Enabled = Internet_Enabled;
   ed.DeepSleepPir  = DeepSleepPir;
   ed.record_on_reboot = record_on_reboot;
-  ed.PIRpin = PIRpin;
   ed.PIRenabled = PIRenabled;
   ed.framesize = framesize;
   ed.repeat = repeat_config;
@@ -1141,7 +1135,6 @@ void do_eprom_write() {
   ed.capture_interval = capture_interval;
   ed.total_frames = total_frames_config;
   ed.xlength = xlength;
-  ed.EnableBOT = EnableBOT;
 
   Serial.println("Writing to EPROM ...");
 
@@ -1280,8 +1273,6 @@ void setup() {
                           
     delay(20);
 
-  
-    //plm print_ram();  delay(2000);
     Serial.println("Starting camera ...");
 
     recording = 0;  // we are NOT recording
@@ -1359,57 +1350,22 @@ bool init_wifi()
     Serial.print("\nBrownOut Regsiter was (in hex) "); Serial.println(brown_reg_temp, HEX);
     WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); //disable brownout detector
 
-    if (strlen(ssid) == 1) {
+    Serial.println("Using WM - go configure - if you haven't yet!");
+    WiFiManager wm;
+    bool res;
+    //wm.resetSettings();  // for debugging
 
-        Serial.println("Using WM - go configure - if you haven't yet!");
-        WiFiManager wm;
-        bool res;
-        //wm.resetSettings();  // for debugging
-
-        wm.setConnectTimeout(20); // how long to try to connect for before continuing
-        wm.setConfigPortalTimeout(30); // auto close configportal after n seconds
-
-        // res = wm.autoConnect(); // auto generated AP name from chipid
-
-        res = wm.autoConnect(devname); // use the devname defined above, with no password
-        //res = wm.autoConnect("AutoConnectAP","password"); // password protected ap
-
-        if (res) {
-            Serial.println("Succesful Connection using WiFiManager");
-
-        } else {
-
-            InternetFailed = true;
-            Serial.println("Internet failed using WiFiManager - not starting Web services");
-        }
+    wm.setConnectTimeout(20); // how long to try to connect for before continuing
+    wm.setConfigPortalTimeout(30); // auto close configportal after n seconds
+    
+    res = wm.autoConnect(devname); // use the devname defined above, with no password
+    
+    if (res) {
+        Serial.println("Connecting using WiFiManager");
+        
     } else {
-
-        WiFi.disconnect(true, true);
-        WiFi.mode(WIFI_STA);
-        WiFi.setHostname(devname);
-        //WiFi.printDiag(Serial);
-        WiFi.begin(ssid, password);
-
-        Serial.println("Connecting to WiFi:")
-        while (WiFi.status() != WL_CONNECTED ) {
-            delay(1000);
-            Serial.print("c");
-            digitalWrite(GPIO_NUM_13, HIGH);
-            
-            if (connAttempts == 20 ) {
-                Serial.println("Cannot connect - try again");
-                WiFi.begin(ssid, password);
-            }
-            if (connAttempts == 30) {
-                Serial.println("Cannot connect - fail");
-
-                WiFi.printDiag(Serial);
-                return false;
-            }
-            connAttempts++;
-        }
-
-        Serial.println("\nInternet connected");
+        InternetFailed = true;
+        Serial.println("Internet failed using WiFiManager");
     }
     
     setTime(time(nullptr));
@@ -1529,12 +1485,12 @@ void make_avi( ) {
 
     if (PIRenabled == 1) {
 
-        PIRstatus = digitalRead(PIRpin) + digitalRead(PIRpin) + digitalRead(PIRpin) ;
+        PIRstatus = digitalRead(PIR_PIN);
         if (DeepSleepPir == 1 && millis() < 15000 ) {
             //DeepSleepPir = 0;
             PIRstatus  = 0;
         }
-        //Serial.print("Mak>> "); Serial.println(PIRstatus);
+
         if (PIRstatus == 0) {
 
 
@@ -1663,10 +1619,6 @@ static void config_camera() {
         config.pixel_format = PIXFORMAT_JPEG;
 
         config.frame_size = FRAMESIZE_UXGA;
-
-        //  v99 - lets get rid of this queuing system --- not just yet
-        //    fb_max = 6;           //74.5 from 7                      // for vga and uxga
-        //    config.jpeg_quality = 6;  //74.5 from 7
 
         fb_max = 6;           //74.5 from 7                      // for vga and uxga
         config.jpeg_quality = 6;  //74.5 from 7
@@ -2115,12 +2067,12 @@ void do_time() {
 
         if (WiFi.status() != WL_CONNECTED) {
             Serial.println("***** WiFi rerestart *****");
-      init_wifi();
+            init_wifi();
+        }
+        
+        MDNS.begin(devname);
+        sprintf(localip, "%s", WiFi.localIP().toString().c_str());
     }
-
-    MDNS.begin(devname);
-    sprintf(localip, "%s", WiFi.localIP().toString().c_str());
-  }
 
 }
 
@@ -2167,7 +2119,7 @@ void loop()
           digitalWrite(RED_LIGHT_PIN, HIGH);
           //rtc_gpio_hold_en(RED_LIGHT_PIN);
 
-          esp_sleep_enable_ext0_wakeup(PIRpin, 0);
+          esp_sleep_enable_ext0_wakeup(PIR_PIN, 0);
           delay(500);
           esp_deep_sleep_start();
       }
