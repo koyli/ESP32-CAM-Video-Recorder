@@ -12,15 +12,25 @@
 #include <HTTPSRedirect.h>
 #include <time.h>
 #include <TimeLib.h>
+//#define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE
+#include "esp_log.h"
+#include "esp_camera.h"
 
 #define RED_LIGHT_PIN GPIO_NUM_33
 #define WHITE_LIGHT_PIN GPIO_NUM_4
 
 #define PIR_PIN GPIO_NUM_12                   // for active high pir or microwave etc
 
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//  edit parameters for wifi name, startup parameters in the local file settings.h
+#include "settings.h"
+
+
+framesize_t  framesize = (framesize_t) 8;                //  13 UXGA, 11 HD, 9 SVGA, 8 VGA, 6 CIF
+int xspeed = XSPEED;
 
 int doUpload = 0;
-
+int quality = QUALITY;
 /*
 
   TimeLapseAvi
@@ -41,18 +51,14 @@ int doUpload = 0;
 */
 
 static const char vernum[] = "vA1";
-
-//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-//  edit parameters for wifi name, startup parameters in the local file settings.h
-#include "settings.h"
-
+int total_frames_config = TOTAL_FRAMES_CONFIG;
+int capture_interval = CAPTURE_INTERVAL;
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 int count_avi = 0;
 int count_cam = 0;
 int count_loop = 0;
-int  new_config = 5;         // this system abandoned !
 int  xlength = total_frames_config * capture_interval / 1000;
-int repeat = repeat_config;  // repeat_config declared in settings
+int repeat = REPEAT_CONFIG;
 int total_frames = total_frames_config;
 
 int recording = 0;
@@ -62,34 +68,11 @@ int PIRstatus = 0;
 int PIRrecording = 0;
 int ready = 0;
 
-// eprom stuff v87
-
-#include <EEPROM.h>
-
-struct eprom_data {
-  int eprom_good;
-  int Internet_Enabled;
-  int DeepSleepPir;
-  int record_on_reboot;
-    int PIRenabled;
-  int  framesize;
-  int  repeat;
-  int  xspeed;
-  int  gray;
-  int  quality;
-  int  capture_interval;
-  int  total_frames;
-  int  xlength;
-
-};
 
 
 
 
 
-//#define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE
-#include "esp_log.h"
-#include "esp_camera.h"
 
 
 
@@ -405,11 +388,10 @@ String signKey()
     byte h1[32];
     byte h2[32];
     byte h3[32];
-    byte h4[32];
     const char* region = "eu-west-2";
     const char* service = "s3";
     const char* req = "aws4_request";
-    char * secret_key = "AWS4" SECRET_KEY;
+    const char * secret_key = "AWS4" SECRET_KEY;
     Serial.println(secret_key);
     String hex1 = hmac256((const byte*)(secret_key), strlen(secret_key), (const byte*)buf2, strlen(buf2));
     fromHex(hex1, h1);
@@ -479,8 +461,6 @@ byte transferBuff[PAYLOAD_MAX];
 
 int put(String path, File payload)
 {
-    size_t bytes_read = 0;
-
     
     
     String can = canonicalUnsignedRequest(String("PUT"), path, payload.size());
@@ -506,13 +486,8 @@ int put(String path, File payload)
     http.addHeader("x-amz-date", dateHeader);
     Serial.println("Sending.. " );
 
-    int r;
     if (payload.size() > 0) {
-        r = http.sendRequest("PUT", &payload, payload.size());
-    }
-    else {
-        //        r = http.sendRequest("PUT", dummy, 1);
-        r = 200;
+        http.sendRequest("PUT", &payload, payload.size());
     }
     Serial.print("File sent: ");
     Serial.println(path);
@@ -637,7 +612,6 @@ void codeForCameraTask( void * parameter )
 {
     int pic_delay = 0;
     int next = 0;
-    long next_run_time = 0;
     Serial.print("camera, core ");  Serial.print(xPortGetCoreID());
     Serial.print(", priority = "); Serial.println(uxTaskPriorityGet(NULL));
 
@@ -746,9 +720,8 @@ void codeForCameraTask( void * parameter )
 
 
             delay(next);
-            next_run_time = millis() + next;
         } else {
-            next_run_time = millis() + capture_interval;
+
             delay(capture_interval);
         }
     }
@@ -769,7 +742,7 @@ static void inline print_quartet(unsigned long i, FILE * fd)
   y[2] = (i >> 16) % 0x100;
   y[3] = (i >> 24) % 0x100;
 
-  size_t i1_err = fwrite(y , 1, 4, fd);
+  fwrite(y , 1, 4, fd);
 
 }
 
@@ -796,7 +769,7 @@ static void IRAM_ATTR PIR_ISR(void* arg) {
   //Serial.print("PIR Interupt>> "); Serial.println(PIRstatus);
 
   //do_blink_short();
-  if (PIRenabled == 1) {
+  if (PIR_ENABLED) {
     if (PIRstatus == 0) {
       if (PIRrecording == 1) {
         // keep recording for 15 more seconds
@@ -944,7 +917,10 @@ void print_ram() {
 //  code copied from user @gemi254
 
 void delete_old_stuff() {
-
+    if (!DELETE_OLD_FILES) {
+        Serial.println("Not deleting - configured not to delete old files");
+        return;
+    }
   Serial.printf("Total space: %lluMB\n", SD_MMC.totalBytes() / (1024 * 1024));
   Serial.printf("Used space: %lluMB\n", SD_MMC.usedBytes() / (1024 * 1024));
 
@@ -1084,68 +1060,7 @@ void print_wakeup_reason() {
 }
 
 
-void do_eprom_read() {
 
-  eprom_data ed;
-
-  long x = millis();
-  EEPROM.begin(200);
-  EEPROM.get(0, ed);
-  Serial.println("Get took " + String(millis() - x));
-
-  if (ed.eprom_good == MagicNumber) {
-    Serial.print("Good settings in the EPROM ");
-    Serial.println(ed.eprom_good);
-    Internet_Enabled = ed.Internet_Enabled; Serial.print("Internet_Enabled "); Serial.println(Internet_Enabled );
-    DeepSleepPir  = ed.DeepSleepPir; Serial.print("DeepSleepPir "); Serial.println(DeepSleepPir );
-    record_on_reboot = ed.record_on_reboot; Serial.print("record_on_reboot "); Serial.println(record_on_reboot );
-    PIRenabled = ed.PIRenabled; Serial.print("PIRenabled "); Serial.println(PIRenabled );
-    framesize = ed.framesize; Serial.print("framesize "); Serial.println(framesize );
-    repeat_config = ed.repeat; Serial.print("repeat_config "); Serial.println(repeat_config );
-    repeat = ed.repeat;
-    xspeed = ed.xspeed; Serial.print("xspeed "); Serial.println(xspeed );
-    gray = ed.gray; Serial.print("gray "); Serial.println(gray );
-    quality = ed.quality; Serial.print("quality "); Serial.println(quality );
-    capture_interval = ed.capture_interval; Serial.print("capture_interval "); Serial.println(capture_interval );
-    total_frames = ed.total_frames;
-    total_frames_config = ed.total_frames; Serial.print("total_frames_config "); Serial.println(total_frames_config );
-    xlength = ed.xlength; Serial.print("xlength "); Serial.println(xlength );
-  } else {
-    Serial.println("No settings in EPROM - putting in hardcoded settings ");
-    do_eprom_write();
-  }
-}
-
-
-void do_eprom_write() {
-
-  eprom_data ed;
-
-  Serial.println("Write settings in the EPROM ");
-  ed.eprom_good = MagicNumber;
-  ed.Internet_Enabled = Internet_Enabled;
-  ed.DeepSleepPir  = DeepSleepPir;
-  ed.record_on_reboot = record_on_reboot;
-  ed.PIRenabled = PIRenabled;
-  ed.framesize = framesize;
-  ed.repeat = repeat_config;
-  ed.xspeed = xspeed;
-  ed.gray = gray;
-  ed.quality = quality;
-  ed.capture_interval = capture_interval;
-  ed.total_frames = total_frames_config;
-  ed.xlength = xlength;
-
-  Serial.println("Writing to EPROM ...");
-
-  long x = millis();
-  EEPROM.begin(200);
-  EEPROM.put(0, ed);
-  EEPROM.commit();
-  EEPROM.end();
-
-  Serial.println("Put took " + String(millis() - x) + " ms, bytes = " + String(sizeof(ed)));
-}
 
 
 void codeForUploadTask(void *parameter) {
@@ -1210,8 +1125,6 @@ void setup() {
     print_wakeup_reason();
 
 
-    do_eprom_read();
-    repeat = repeat_config;
     total_frames = total_frames_config;
 
     if (!psramFound()) {
@@ -1278,13 +1191,11 @@ void setup() {
     recording = 0;  // we are NOT recording
     config_camera();
 
-#ifdef include_pir_and_touch
     setupinterrupts();
-#endif
 
     newfile = 0;    // no file is open  // don't fiddle with this!
 
-    recording = record_on_reboot;
+    recording = RECORD_ON_REBOOT;
 
     //plm print_ram();  delay(2000);
 
@@ -1300,7 +1211,7 @@ void setup() {
 
     print_ram();
 
-    if (delete_old_files) delete_old_stuff();
+    delete_old_stuff();
 }
 
 
@@ -1332,18 +1243,17 @@ void major_fail() {
 
 void printLocalTime()
 {
-  struct tm timeinfo;
-  if(!getLocalTime(&timeinfo)){
-    Serial.println("Failed to obtain time");
-    return;
-  }
-  Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
+    struct tm timeinfo;
+    if(!getLocalTime(&timeinfo)){
+        Serial.println("Failed to obtain time");
+        return;
+    }
+    Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
 }
 
 bool init_wifi()
 {
     Serial.println("Initializing Wifi");
-    int connAttempts = 0;
 
     Serial.println(" Disable brownout");
     uint32_t brown_reg_temp = READ_PERI_REG(RTC_CNTL_BROWN_OUT_REG); //save WatchDog register
@@ -1383,8 +1293,6 @@ bool init_wifi()
         tzset();
 
         timeinfo = { 0 };
-        int retry = 0;
-        const int retry_count = 30;
         delay(1000);
 
         time_t n = now();
@@ -1408,13 +1316,13 @@ bool init_wifi()
 
     wifi_ps_type_t the_type;
 
-    esp_err_t get_ps = esp_wifi_get_ps(&the_type);
+    esp_wifi_get_ps(&the_type);
     Serial.printf("The power save was: %d\n", the_type);
 
     Serial.printf("Set power save to %d\n", WIFI_PS_NONE);
-    esp_err_t set_ps = esp_wifi_set_ps(WIFI_PS_NONE);
+    esp_wifi_set_ps(WIFI_PS_NONE);
 
-    esp_err_t new_ps = esp_wifi_get_ps(&the_type);
+    esp_wifi_get_ps(&the_type);
     Serial.printf("The power save is : %d\n", the_type);
 
     Serial.println(" Enable brownout");
@@ -1483,11 +1391,10 @@ static esp_err_t init_sdcard()
 
 void make_avi( ) {
 
-    if (PIRenabled == 1) {
+    if (PIR_ENABLED == 1) {
 
         PIRstatus = digitalRead(PIR_PIN);
-        if (DeepSleepPir == 1 && millis() < 15000 ) {
-            //DeepSleepPir = 0;
+        if (DEEP_SLEEP_PIR && millis() < 15000 ) {
             PIRstatus  = 0;
         }
 
@@ -1532,7 +1439,7 @@ void make_avi( ) {
 
         Serial.println(" ");
 
-        if (delete_old_files) delete_old_stuff();
+        delete_old_stuff();
 
         start_avi();                                 // now start the avi
 
@@ -1595,44 +1502,39 @@ static void config_camera() {
 
     //Serial.println("config camera");
 
-    if (new_config == 5) {
+    config.ledc_channel = LEDC_CHANNEL_0;
+    config.ledc_timer = LEDC_TIMER_0;
+    config.pin_d0 = Y2_GPIO_NUM;
+    config.pin_d1 = Y3_GPIO_NUM;
+    config.pin_d2 = Y4_GPIO_NUM;
+    config.pin_d3 = Y5_GPIO_NUM;
+    config.pin_d4 = Y6_GPIO_NUM;
+    config.pin_d5 = Y7_GPIO_NUM;
+    config.pin_d6 = Y8_GPIO_NUM;
+    config.pin_d7 = Y9_GPIO_NUM;
+    config.pin_xclk = XCLK_GPIO_NUM;
+    config.pin_pclk = PCLK_GPIO_NUM;
+    config.pin_vsync = VSYNC_GPIO_NUM;
+    config.pin_href = HREF_GPIO_NUM;
+    config.pin_sscb_sda = SIOD_GPIO_NUM;
+    config.pin_sscb_scl = SIOC_GPIO_NUM;
+    config.pin_pwdn = PWDN_GPIO_NUM;
+    config.pin_reset = RESET_GPIO_NUM;
+    config.xclk_freq_hz = 20000000;
+    config.pixel_format = PIXFORMAT_JPEG;
 
-        config.ledc_channel = LEDC_CHANNEL_0;
-        config.ledc_timer = LEDC_TIMER_0;
-        config.pin_d0 = Y2_GPIO_NUM;
-        config.pin_d1 = Y3_GPIO_NUM;
-        config.pin_d2 = Y4_GPIO_NUM;
-        config.pin_d3 = Y5_GPIO_NUM;
-        config.pin_d4 = Y6_GPIO_NUM;
-        config.pin_d5 = Y7_GPIO_NUM;
-        config.pin_d6 = Y8_GPIO_NUM;
-        config.pin_d7 = Y9_GPIO_NUM;
-        config.pin_xclk = XCLK_GPIO_NUM;
-        config.pin_pclk = PCLK_GPIO_NUM;
-        config.pin_vsync = VSYNC_GPIO_NUM;
-        config.pin_href = HREF_GPIO_NUM;
-        config.pin_sscb_sda = SIOD_GPIO_NUM;
-        config.pin_sscb_scl = SIOC_GPIO_NUM;
-        config.pin_pwdn = PWDN_GPIO_NUM;
-        config.pin_reset = RESET_GPIO_NUM;
-        config.xclk_freq_hz = 20000000;
-        config.pixel_format = PIXFORMAT_JPEG;
+    config.frame_size = FRAMESIZE_UXGA;
 
-        config.frame_size = FRAMESIZE_UXGA;
+    fb_max = 6;           //74.5 from 7                      // for vga and uxga
+    config.jpeg_quality = 6;  //74.5 from 7
 
-        fb_max = 6;           //74.5 from 7                      // for vga and uxga
-        config.jpeg_quality = 6;  //74.5 from 7
+    config.fb_count = fb_max + 1;
 
-        config.fb_count = fb_max + 1;
-
-        // camera init
-        cam_err = esp_camera_init(&config);
-        if (cam_err != ESP_OK) {
-            Serial.printf("Camera init failed with error 0x%x", cam_err);
-            major_fail();
-        }
-
-        new_config = 2;
+    // camera init
+    cam_err = esp_camera_init(&config);
+    if (cam_err != ESP_OK) {
+        Serial.printf("Camera init failed with error 0x%x", cam_err);
+        major_fail();
     }
 
     delay(100);
@@ -1640,7 +1542,7 @@ static void config_camera() {
     sensor_t * ss = esp_camera_sensor_get();
     ss->set_quality(ss, quality);
     ss->set_framesize(ss, (framesize_t)framesize);
-    if (gray == 1) {
+    if (GRAY) {
         ss->set_special_effect(ss, 2);  // 0 regular, 2 grayscale
     } else {
         ss->set_special_effect(ss, 0);  // 0 regular, 2 grayscale
@@ -1732,63 +1634,63 @@ static void start_avi() {
             buf[i] = ch;
         }
 
-    size_t err = fwrite(buf, 1, AVIOFFSET, avifile);
+    fwrite(buf, 1, AVIOFFSET, avifile);
     //v99 - uxga 13, hd 11, svga 9, vga 8, cif 6
     if (framesize == 8) {
 
         fseek(avifile, 0x40, SEEK_SET);
-        err = fwrite(vga_w, 1, 2, avifile);
+        fwrite(vga_w, 1, 2, avifile);
         fseek(avifile, 0xA8, SEEK_SET);
-        err = fwrite(vga_w, 1, 2, avifile);
+        fwrite(vga_w, 1, 2, avifile);
         fseek(avifile, 0x44, SEEK_SET);
-        err = fwrite(vga_h, 1, 2, avifile);
+        fwrite(vga_h, 1, 2, avifile);
         fseek(avifile, 0xAC, SEEK_SET);
-        err = fwrite(vga_h, 1, 2, avifile);
+        fwrite(vga_h, 1, 2, avifile);
 
     } else if (framesize == 13) {
 
         fseek(avifile, 0x40, SEEK_SET);
-        err = fwrite(uxga_w, 1, 2, avifile);
+        fwrite(uxga_w, 1, 2, avifile);
         fseek(avifile, 0xA8, SEEK_SET);
-        err = fwrite(uxga_w, 1, 2, avifile);
+        fwrite(uxga_w, 1, 2, avifile);
         fseek(avifile, 0x44, SEEK_SET);
-        err = fwrite(uxga_h, 1, 2, avifile);
+        fwrite(uxga_h, 1, 2, avifile);
         fseek(avifile, 0xAC, SEEK_SET);
-        err = fwrite(uxga_h, 1, 2, avifile);
+        fwrite(uxga_h, 1, 2, avifile);
 
     } else if (framesize == 11) {
 
         fseek(avifile, 0x40, SEEK_SET);
-        err = fwrite(hd_w, 1, 2, avifile);
+        fwrite(hd_w, 1, 2, avifile);
         fseek(avifile, 0xA8, SEEK_SET);
-        err = fwrite(hd_w, 1, 2, avifile);
+        fwrite(hd_w, 1, 2, avifile);
         fseek(avifile, 0x44, SEEK_SET);
-        err = fwrite(hd_h, 1, 2, avifile);
+        fwrite(hd_h, 1, 2, avifile);
         fseek(avifile, 0xAC, SEEK_SET);
-        err = fwrite(hd_h, 1, 2, avifile);
+        fwrite(hd_h, 1, 2, avifile);
 
 
     } else if (framesize == 9) {
 
         fseek(avifile, 0x40, SEEK_SET);
-        err = fwrite(svga_w, 1, 2, avifile);
+        fwrite(svga_w, 1, 2, avifile);
         fseek(avifile, 0xA8, SEEK_SET);
-        err = fwrite(svga_w, 1, 2, avifile);
+        fwrite(svga_w, 1, 2, avifile);
         fseek(avifile, 0x44, SEEK_SET);
-        err = fwrite(svga_h, 1, 2, avifile);
+        fwrite(svga_h, 1, 2, avifile);
         fseek(avifile, 0xAC, SEEK_SET);
-        err = fwrite(svga_h, 1, 2, avifile);
+        fwrite(svga_h, 1, 2, avifile);
 
     }  else if (framesize == 6) {
 
         fseek(avifile, 0x40, SEEK_SET);
-        err = fwrite(cif_w, 1, 2, avifile);
+        fwrite(cif_w, 1, 2, avifile);
         fseek(avifile, 0xA8, SEEK_SET);
-        err = fwrite(cif_w, 1, 2, avifile);
+        fwrite(cif_w, 1, 2, avifile);
         fseek(avifile, 0x44, SEEK_SET);
-        err = fwrite(cif_h, 1, 2, avifile);
+        fwrite(cif_h, 1, 2, avifile);
         fseek(avifile, 0xAC, SEEK_SET);
-        err = fwrite(cif_h, 1, 2, avifile);
+        fwrite(cif_h, 1, 2, avifile);
     }
 
     fseek(avifile, AVIOFFSET, SEEK_SET);
@@ -1848,17 +1750,14 @@ static void another_save_avi() {
 
         //xSemaphoreGive( baton );
 
-        if (BlinkWithWrite) {
-            digitalWrite(RED_LIGHT_PIN, LOW);
-        }
 
         jpeg_size = fblen;
         movi_size += jpeg_size;
         uVideoLen += jpeg_size;
 
         bw = millis();
-        size_t dc_err = fwrite(dc_buf, 1, 4, avifile);
-        size_t ze_err = fwrite(zero_buf, 1, 4, avifile);
+        fwrite(dc_buf, 1, 4, avifile);
+        fwrite(zero_buf, 1, 4, avifile);
 
 
         int time_to_give_up = 0;
@@ -1872,15 +1771,10 @@ static void another_save_avi() {
         size_t err = fwrite(fb_q[fb_out]->buf, 1, fb_q[fb_out]->len, avifile);
 
         time_to_give_up = 0;
-        while (err != fb_q[fb_out]->len) {
-            Serial.print("Error on avi write: err = "); Serial.print(err);
+        if (err != fb_q[fb_out]->len) {
+            Serial.print("Error on avi write: bytes_written = "); Serial.print(err);
             Serial.print(" len = "); Serial.println(fb_q[fb_out]->len);
-            time_to_give_up++;
-            if (time_to_give_up == 10) major_fail();
-            Serial.print(time_to_give_up); Serial.print(" Low on heap !!! "); Serial.println(ESP.getFreeHeap());
-
-            delay(1000);
-            size_t err = fwrite(fb_q[fb_out]->buf, 1, fb_q[fb_out]->len, avifile);
+            major_fail();
 
         }
 
@@ -1900,7 +1794,7 @@ static void another_save_avi() {
         jpeg_size = jpeg_size + remnant;
         movi_size = movi_size + remnant;
         if (remnant > 0) {
-            size_t rem_err = fwrite(zero_buf, 1, remnant, avifile);
+            fwrite(zero_buf, 1, remnant, avifile);
         }
 
         fileposition = ftell (avifile);       // Here, we are at end of chunk (after padding)
@@ -2000,7 +1894,7 @@ static void end_avi() {
 
     fclose(idxfile);
 
-    size_t i1_err = fwrite(idx1_buf, 1, 4, avifile);
+    fwrite(idx1_buf, 1, 4, avifile);
 
     print_quartet(frame_cnt * 16, avifile);
 
@@ -2017,16 +1911,16 @@ static void end_avi() {
     AteBytes = (char*) malloc (8);
 
     for (int i = 0; i < frame_cnt; i++) {
-        size_t res = fread ( AteBytes, 1, 8, idxfile);
-        size_t i1_err = fwrite(dc_buf, 1, 4, avifile);
-        size_t i2_err = fwrite(zero_buf, 1, 4, avifile);
-        size_t i3_err = fwrite(AteBytes, 1, 8, avifile);
+        fread ( AteBytes, 1, 8, idxfile);
+        fwrite(dc_buf, 1, 4, avifile);
+        fwrite(zero_buf, 1, 4, avifile);
+        fwrite(AteBytes, 1, 8, avifile);
     }
 
     free(AteBytes);
     fclose(idxfile);
     fclose(avifile);
-    int xx = remove("/sdcard/idx.tmp");
+    remove("/sdcard/idx.tmp");
 
     String fname_status = fname;
 
@@ -2096,17 +1990,16 @@ void loop()
   }
 
 
-  if (DeepSleepPir) {
+  if (DEEP_SLEEP_PIR) {
 
-      if (recording == 0 && PIRenabled == 1 && uploading == 0) {
+      if (recording == 0 && PIR_ENABLED && uploading == 0) {
 
           delay(10000);                                     //   wait 10 seoonds for another event before sleep
 
           Serial.println("Trying again ..  to sleep now?" );
           Serial.print("recording: "); Serial.println(recording);
-          Serial.print("PIRenabled: "); Serial.println(PIRenabled);
 
-      if (recording == 0 && PIRenabled == 1 && uploading == 0) {
+      if (recording == 0 && PIR_ENABLED && uploading == 0) {
 
           Serial.println("Going to sleep now");
           digitalWrite(GPIO_NUM_13, LOW);
