@@ -50,7 +50,6 @@ int quality = QUALITY;
 
 */
 
-static const char vernum[] = "vA1";
 int total_frames_config = TOTAL_FRAMES_CONFIG;
 int capture_interval = CAPTURE_INTERVAL;
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -64,7 +63,6 @@ int total_frames = total_frames_config;
 int recording = 0;
 int uploading = 0;
 
-int PIRstatus = 0;
 int PIRrecording = 0;
 int ready = 0;
 
@@ -765,7 +763,7 @@ WiFiEventId_t eventID;
 
 static void IRAM_ATTR PIR_ISR(void* arg) {
 
-    PIRstatus = digitalRead(PIR_PIN);
+    int PIRstatus = digitalRead(PIR_PIN);
   //Serial.print("PIR Interupt>> "); Serial.println(PIRstatus);
 
   //do_blink_short();
@@ -1115,8 +1113,7 @@ void setup() {
     // zzz
     Serial.println("                                    ");
     Serial.println("-------------------------------------");
-    Serial.printf("ESP-CAM Video Recorder %s\n", vernum);
-    Serial.printf(" http://%s.local - to access the camera\n", devname);
+    Serial.printf("ESP-CAM Video Recorder\n");
     Serial.println("-------------------------------------");
 
 
@@ -1393,7 +1390,7 @@ void make_avi( ) {
 
     if (PIR_ENABLED == 1) {
 
-        PIRstatus = digitalRead(PIR_PIN);
+        int PIRstatus = digitalRead(PIR_PIN);
         if (DEEP_SLEEP_PIR && millis() < 15000 ) {
             PIRstatus  = 0;
         }
@@ -1984,8 +1981,6 @@ void loop()
   if (first) {
     Serial.print("the loop, core ");  Serial.print(xPortGetCoreID());
     Serial.print(", priority = "); Serial.println(uxTaskPriorityGet(NULL));
-    //vTaskPrioritySet( NULL, 2 );
-    //print_ram();
     first = 0;
   }
 
