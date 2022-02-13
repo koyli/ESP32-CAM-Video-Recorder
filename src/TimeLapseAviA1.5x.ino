@@ -9,7 +9,7 @@
 #include <ESPmDNS.h>
 #include <Update.h>
 #include <ArduinoOTA.h>
-#include <HTTPSRedirect.h>
+
 #include <time.h>
 #include <TimeLib.h>
 //#define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE
@@ -24,6 +24,9 @@
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 //  edit parameters for wifi name, startup parameters in the local file settings.h
 #include "settings.h"
+
+
+RTC_DATA_ATTR unsigned int epoch_time = 0;
 
 
 framesize_t  framesize = (framesize_t) 8;                //  13 UXGA, 11 HD, 9 SVGA, 8 VGA, 6 CIF
@@ -55,7 +58,7 @@ int capture_interval = CAPTURE_INTERVAL;
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 int count_avi = 0;
 int count_cam = 0;
-int count_loop = 0;
+
 int  xlength = total_frames_config * capture_interval / 1000;
 int repeat = REPEAT_CONFIG;
 int total_frames = total_frames_config;
@@ -637,12 +640,7 @@ void codeForCameraTask( void * parameter )
                 fb_in = (fb_in + 1) % fb_max;
                 bp = millis();
 
-                //fb_q[fb_in] = esp_camera_fb_get();
-                //Serial.print (fb_q[fb_out]->buf[fblen-2],HEX );  Serial.print(":");
-                //Serial.print (fb_q[fb_out]->buf[fblen-1],HEX );  //Serial.print(":");
-
                 do {
-
 
                     digitalWrite(GPIO_NUM_13, HIGH);
 
@@ -764,9 +762,7 @@ WiFiEventId_t eventID;
 static void IRAM_ATTR PIR_ISR(void* arg) {
 
     int PIRstatus = digitalRead(PIR_PIN);
-  //Serial.print("PIR Interupt>> "); Serial.println(PIRstatus);
 
-  //do_blink_short();
   if (PIR_ENABLED) {
     if (PIRstatus == 0) {
       if (PIRrecording == 1) {
@@ -857,21 +853,6 @@ void do_blink() {
   ledcWrite( 5, 7);
 }
 
-void do_blink_short() {
-  //Serial.println("<<<*** blink ***>>>");
-  // timer 3, 80 million / 80000 = 1 millisecond, 20 ms
-  timer = timerBegin(3, 8000, true);
-  timerAttachInterrupt(timer, &onTimer, true);
-  timerAlarmWrite(timer, 20, false);
-  timerAlarmEnable(timer);
-
-  // pwm channel 5, 5000 freq, 8 bit resolution, dutycycle 1, gpio WHITE_LIGHT_PIN
-
-  ledcSetup(5, 5000, 8 );
-  ledcAttachPin(WHITE_LIGHT_PIN, 5);
-  ledcWrite( 5, 1);
-}
-
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 //
@@ -882,7 +863,6 @@ void print_ram() {
   Serial.println("cam / avi / loop ");
   Serial.print(count_cam); Serial.print(" / ");
   Serial.print(count_avi); Serial.print(" / ");
-  Serial.print(count_loop); Serial.println("  ");
 
   Serial.printf("Internal Total heap %d, internal Free Heap %d\n", ESP.getHeapSize(), ESP.getFreeHeap());
   Serial.printf("SPIRam Total heap   %d, SPIRam Free Heap   %d\n", ESP.getPsramSize(), ESP.getFreePsram());
@@ -1067,7 +1047,6 @@ void codeForUploadTask(void *parameter) {
 
     for (;;) {
         
-
         do_time();
         if (WiFi.status() == WL_CONNECTED) {
             Serial.println("Wifi connected - will attempt upload");
@@ -1121,6 +1100,13 @@ void setup() {
     Serial.println("Boot number: " + String(bootCount));
     print_wakeup_reason();
 
+    if (epoch_time > 0) {
+        /* will be lower bound - better than 1970 */
+        struct timeval tv;
+        tv.tv_sec = epoch_time;
+        tv.tv_usec = 0;
+        settimeofday(&tv, nullptr);
+    }
 
     total_frames = total_frames_config;
 
@@ -1388,7 +1374,7 @@ static esp_err_t init_sdcard()
 
 void make_avi( ) {
 
-    if (PIR_ENABLED == 1) {
+    if (PIR_ENABLED) {
 
         int PIRstatus = digitalRead(PIR_PIN);
         if (DEEP_SLEEP_PIR && millis() < 15000 ) {
@@ -1396,8 +1382,6 @@ void make_avi( ) {
         }
 
         if (PIRstatus == 0) {
-
-
             if (PIRrecording == 1) {
                 // keep recording for 15 more seconds
                 if ( (millis() - startms) > (total_frames * capture_interval - 5000)
@@ -1406,10 +1390,12 @@ void make_avi( ) {
 
                     total_frames = total_frames + 10000 / capture_interval ;
                     //Serial.print("Make PIR frames = "); Serial.println(total_frames);
-                    Serial.print("s");
+                    Serial.print("f");
                     //Serial.println("Add another 10 seconds");
                 }
-
+                else {
+                    Serial.print("u");
+                }
             } else {
 
                 if ( recording == 0 && newfile == 0) {
@@ -1430,7 +1416,6 @@ void make_avi( ) {
 
     if (newfile == 0 && recording == 1) {                                     // open the file
         digitalWrite(GPIO_NUM_13, HIGH);
-
         digitalWrite(RED_LIGHT_PIN, HIGH);
         newfile = 1;
 
@@ -1442,7 +1427,7 @@ void make_avi( ) {
 
     } else {
 
-        // we have a file open, but not recording
+         // we have a file open, but not recording
 
         if (newfile == 1 && recording == 0) {                                  // got command to close file
 
@@ -1974,54 +1959,48 @@ void do_time() {
 
 long wakeup;
 long last_wakeup = 0;
-int first = 1;
 
 void loop()
 {
-  if (first) {
-    Serial.print("the loop, core ");  Serial.print(xPortGetCoreID());
-    Serial.print(", priority = "); Serial.println(uxTaskPriorityGet(NULL));
-    first = 0;
-  }
 
 
   if (DEEP_SLEEP_PIR) {
+      if (recording == 0) {
+          Serial.println("Not recording");
 
-      if (recording == 0 && PIR_ENABLED && uploading == 0) {
+          if (PIR_ENABLED && uploading == 0) {
 
-          delay(10000);                                     //   wait 10 seoonds for another event before sleep
+              delay(10000);                                     //   wait 10 seoonds for another event before sleep
+              
+              Serial.println("Trying again ..  to sleep now?" );
+              Serial.print("recording: "); Serial.println(recording);
 
-          Serial.println("Trying again ..  to sleep now?" );
-          Serial.print("recording: "); Serial.println(recording);
+              if (uploading == 0) {
 
-      if (recording == 0 && PIR_ENABLED && uploading == 0) {
+                  Serial.println("Going to sleep now");
+                  digitalWrite(GPIO_NUM_13, LOW);
+                  gpio_hold_en(GPIO_NUM_13);
+                  
+                  pinMode(WHITE_LIGHT_PIN, OUTPUT);
+                  digitalWrite(WHITE_LIGHT_PIN, LOW);
+                  rtc_gpio_hold_en(WHITE_LIGHT_PIN);
+                  gpio_deep_sleep_hold_en();
+                  digitalWrite(RED_LIGHT_PIN, HIGH);
+                  //rtc_gpio_hold_en(RED_LIGHT_PIN);
 
-          Serial.println("Going to sleep now");
-          digitalWrite(GPIO_NUM_13, LOW);
-          gpio_hold_en(GPIO_NUM_13);
-
-          pinMode(WHITE_LIGHT_PIN, OUTPUT);
-          digitalWrite(WHITE_LIGHT_PIN, LOW);
-          rtc_gpio_hold_en(WHITE_LIGHT_PIN);
-          gpio_deep_sleep_hold_en();
-          digitalWrite(RED_LIGHT_PIN, HIGH);
-          //rtc_gpio_hold_en(RED_LIGHT_PIN);
-
-          esp_sleep_enable_ext0_wakeup(PIR_PIN, 0);
-          delay(500);
-          esp_deep_sleep_start();
+                  epoch_time = now();
+                  esp_sleep_enable_ext0_wakeup(PIR_PIN, 0);
+                  delay(500);
+                  esp_deep_sleep_start();
+              }
+          }
+          else {
+              Serial.println("Uploading");
+          }
       }
-    }
-  }
-
-
-  count_loop++;
-  wakeup = millis();
-  if (wakeup - last_wakeup > (60  * 60 * 1000) ) {       // 60 minutes
-    last_wakeup = millis();
-    do_time();
-
-
+      else {
+          Serial.println("Still recording");
+      }
   }
 
 

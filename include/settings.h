@@ -18,7 +18,7 @@ static const char devname[] = "desklens";         // name of your camera for mDN
 
 // VGA 10 fps for 30 minutes, and repeat, play at real time
 
-#define REPEAT_CONFIG 100                 //  repaeat same movie this many times
+#define REPEAT_CONFIG 0                 //  repaeat same movie this many times
 #define XSPEED 1                   //  playback speed - realtime is 1, or 300 means playpack 30 fps of frames at 10 second per frame ( 30 fps / 0.1 fps ) 
 #define GRAY 0                     //  not gray
 #define QUALITY 12                //  quality on the 10..50 subscale - 10 is good, 20 is grainy and smaller files, 12 is better in bright sunshine due to clipping
