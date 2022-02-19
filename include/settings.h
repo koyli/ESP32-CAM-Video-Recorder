@@ -23,5 +23,5 @@ static const char devname[] = "desklens";         // name of your camera for mDN
 #define GRAY 0                     //  not gray
 #define QUALITY 12                //  quality on the 10..50 subscale - 10 is good, 20 is grainy and smaller files, 12 is better in bright sunshine due to clipping
 #define CAPTURE_INTERVAL 100       //  milli-seconds between frames
-#define TOTAL_FRAMES_CONFIG 100;  //  how many frames - length of movie in ms is total_frames x capture_interval
+#define TOTAL_FRAMES_CONFIG 300;  //  how many frames - length of movie in ms is total_frames x capture_interval
 

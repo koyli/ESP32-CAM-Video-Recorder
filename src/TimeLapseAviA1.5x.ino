@@ -34,6 +34,9 @@ int xspeed = XSPEED;
 
 int doUpload = 0;
 int quality = QUALITY;
+#define MAX_VIDEOS 3
+int videos;
+
 /*
 
   TimeLapseAvi
@@ -79,8 +82,9 @@ int ready = 0;
 
 
 #include <WiFi.h>
-#include <WiFiManager.h>
+#include <WiFiMulti.h>
 #include <ESPmDNS.h>
+WiFiMulti wifiMulti;
 bool InternetFailed = false;
 
 int diskspeed = 0;
@@ -526,7 +530,7 @@ int uploadFile(File todo)
     }
 
     
-    if (!put(fname, avi)) {
+    if (!put(cofile, avi)) {
             /* fail */
         Serial.println ("failed put");
         return 0;
@@ -560,8 +564,7 @@ void traverse(File d) {
 
                     f.close();
                     SD_MMC.remove(name.c_str());
-                    uploading = 0;
-                    return;
+
                 }
                 else {
                     f.close();
@@ -584,6 +587,7 @@ void upload() {
     Serial.println("Upload task ran");
     File d = SD_MMC.open("/");
     traverse(d);
+    uploading = 0;
 }
 
 
@@ -752,76 +756,8 @@ WiFiEventId_t eventID;
 #include "driver/rtc_io.h"
 
 
-//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-//
-//  PIR_ISR - interupt handler for PIR  - starts or extends a video
-//
 #define MAX_FRAMES (10 * 30)
 
-
-static void IRAM_ATTR PIR_ISR(void* arg) {
-
-    int PIRstatus = digitalRead(PIR_PIN);
-
-  if (PIR_ENABLED) {
-    if (PIRstatus == 0) {
-      if (PIRrecording == 1) {
-        // keep recording for 15 more seconds
-
-        if ( (millis() - startms) > (total_frames * capture_interval - 5000) &&
-             total_frames < MAX_FRAMES) {
-
-          total_frames = total_frames + 10000 / capture_interval ;
-          //Serial.print("PIR frames = "); Serial.println(total_frames);
-          Serial.print("*");
-          //Serial.println("Add another 10 seconds");
-        }
-
-      } else {
-
-        if ( recording == 0 && newfile == 0) {
-
-          //start a pir recording with current parameters, except no repeat and 15 seconds
-          Serial.println("Start a PIR");
-          PIRrecording = 1;
-          repeat = 0;
-          total_frames = 15000 / capture_interval;
-          startms = millis();
-          Serial.print("PIR frames = "); Serial.println(total_frames);
-          xlength = total_frames * capture_interval / 1000;
-          recording = 1;
-          BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-          vTaskNotifyGiveFromISR(AviWriterTask, &xHigherPriorityTaskWoken);
-          do_blink();
-        }
-      }
-    }
-  }
-}
-
-
-//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-//
-// setup some interupts during reboot
-//
-
-static void setupinterrupts() {
-
-  pinMode(PIR_PIN, INPUT_PULLDOWN);
-
-  Serial.print("PIR_PIN = ");
-  for (int i = 0; i < 5; i++) {
-    Serial.print( digitalRead(PIR_PIN) ); Serial.print(", ");
-  }
-  Serial.println(" ");
-
-  esp_err_t err = gpio_isr_handler_add((gpio_num_t)PIR_PIN, &PIR_ISR, NULL);
-
-  if (err != ESP_OK) Serial.printf("gpio_isr_handler_add failed (%x)", err);
-  gpio_set_intr_type((gpio_num_t)PIR_PIN, GPIO_INTR_ANYEDGE);
-
-  Serial.println(" ");
-}
 
 
 
@@ -831,28 +767,6 @@ static void setupinterrupts() {
 //
 
 hw_timer_t * timer = NULL;
-
-// shut off the Blinding Disk-Active Light
-void IRAM_ATTR onTimer() {
-  ledcWrite( 5, 0);
-}
-
-// blink on the Blinding Disk-Active Light for 100 ms, 1/256th intensity
-void do_blink() {
-  //Serial.println("<<<*** BLINK ***>>>");
-  // timer 3, 80 million / 80000 = 1 millisecond, 100 ms
-  timer = timerBegin(3, 8000, true);
-  timerAttachInterrupt(timer, &onTimer, true);
-  timerAlarmWrite(timer, 100, false);
-  timerAlarmEnable(timer);
-
-  // pwm channel 5, 5000 freq, 8 bit resolution, dutycycle 7, gpio 4
-
-  ledcSetup(5, 5000, 8 );
-  ledcAttachPin(WHITE_LIGHT_PIN, 5);
-  ledcWrite( 5, 7);
-}
-
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 //
@@ -877,11 +791,6 @@ void print_ram() {
   }
 
 
-  //Serial.printf( "Task Name\tStatus\tPrio\tHWM\tTask\tAffinity\n");
-  // char stats_buffer[1024];
-  //vTaskList(stats_buffer);
-  // vTaskGetRunTimeStats(stats_buffer);
-  // Serial.printf("%s\n\n", stats_buffer);
   Serial.println("----");
 }
 
@@ -1055,7 +964,7 @@ void codeForUploadTask(void *parameter) {
         else {
             Serial.println("No wifi - skipping upload");
         }
-        delay(60 * 1000);
+        delay(15 * 1000);
     }
 }
 
@@ -1084,6 +993,7 @@ void setup() {
     //pinMode(GPIO_NUM_13, OUTPUT);
     //digitalWrite(GPIO_NUM_13, HIGH);
 
+    videos = 0;
     
     Serial.setDebugOutput(true);
     Serial.print("setup, core ");  Serial.print(xPortGetCoreID());
@@ -1174,8 +1084,6 @@ void setup() {
     recording = 0;  // we are NOT recording
     config_camera();
 
-    setupinterrupts();
-
     newfile = 0;    // no file is open  // don't fiddle with this!
 
     recording = RECORD_ON_REBOOT;
@@ -1205,7 +1113,7 @@ void major_fail() {
 
     Serial.println(" ");
 
-    for  (int i = 0;  i < 10; i++) {                 // 10 loops or about 100 seconds then reboot
+    for  (int i = 0;  i < 5; i++) {                 // 5 loops or about 100 seconds then reboot
         for (int j = 0; j < 3; j++) {
             digitalWrite(RED_LIGHT_PIN, LOW);   delay(150);
             digitalWrite(RED_LIGHT_PIN, HIGH);  delay(150);
@@ -1244,69 +1152,55 @@ bool init_wifi()
     WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); //disable brownout detector
 
     Serial.println("Using WM - go configure - if you haven't yet!");
-    WiFiManager wm;
+
     bool res;
     //wm.resetSettings();  // for debugging
 
-    wm.setConnectTimeout(20); // how long to try to connect for before continuing
-    wm.setConfigPortalTimeout(30); // auto close configportal after n seconds
+    wifiMulti.addAP(WIFI_SSID_1, WIFI_ACCESSCODE_1);
+    wifiMulti.addAP(WIFI_SSID_2, WIFI_ACCESSCODE_2);
+
+    unsigned long startTime = millis();
     
-    res = wm.autoConnect(devname); // use the devname defined above, with no password
-    
-    if (res) {
-        Serial.println("Connecting using WiFiManager");
-        
-    } else {
-        InternetFailed = true;
-        Serial.println("Internet failed using WiFiManager");
-    }
-    
+    while (wifiMulti.run() != WL_CONNECTED && millis() - startTime < 60000)
+        {
+            Serial.print(".");
+            delay(500);
+        }
+
     setTime(time(nullptr));
 
-    if (!InternetFailed) {
-        if (!MDNS.begin(devname)) {
-            Serial.println("Error setting up MDNS responder!");
-        } else {
-            Serial.printf("mDNS responder started '%s'\n", devname);
-        }
-
-        configTime(0, 0, "pool.ntp.org");
-
-        setenv("TZ", TIMEZONE, 1);  // mountain time zone from #define at top
-        tzset();
-
-        timeinfo = { 0 };
-        delay(1000);
-
-        time_t n = now();
-        localtime_r(&n, &timeinfo);
-        Serial.print("Local time: "); Serial.println(ctime(&n));
-        sprintf(localip, "%s", WiFi.localIP().toString().c_str());
-
-        while(time(nullptr) < 100000) {
-            Serial.print("t");
-            delay(100);
-        }
-        printLocalTime();
-        setTime(time(nullptr));
-        unsigned long t = now();
-        
-        char buf1[20];
-
-        sprintf(buf1, "%04d%02d%02dT%02d%02d%02dZ",  year(t),month(t), day(t), hour(t), minute(t), second(t));
-        Serial.println(buf1);
+    if (!MDNS.begin(devname)) {
+        Serial.println("Error setting up MDNS responder!");
+    } else {
+        Serial.printf("mDNS responder started '%s'\n", devname);
     }
+    
+    configTime(0, 0, "pool.ntp.org");
 
-    wifi_ps_type_t the_type;
-
-    esp_wifi_get_ps(&the_type);
-    Serial.printf("The power save was: %d\n", the_type);
-
-    Serial.printf("Set power save to %d\n", WIFI_PS_NONE);
-    esp_wifi_set_ps(WIFI_PS_NONE);
-
-    esp_wifi_get_ps(&the_type);
-    Serial.printf("The power save is : %d\n", the_type);
+    setenv("TZ", TIMEZONE, 1);  // mountain time zone from #define at top
+    tzset();
+    
+    timeinfo = { 0 };
+    delay(1000);
+    
+    time_t n = now();
+    localtime_r(&n, &timeinfo);
+    Serial.print("Local time: "); Serial.println(ctime(&n));
+    sprintf(localip, "%s", WiFi.localIP().toString().c_str());
+    
+    while(time(nullptr) < 100000) {
+        Serial.print("t");
+        delay(100);
+    }
+    printLocalTime();
+    setTime(time(nullptr));
+    unsigned long t = now();
+    
+    char buf1[20];
+    
+    sprintf(buf1, "%04d%02d%02dT%02d%02d%02dZ",  year(t),month(t), day(t), hour(t), minute(t), second(t));
+    Serial.println(buf1);
+ 
 
     Serial.println(" Enable brownout");
     WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, brown_reg_temp); //enable brownout detector
@@ -1327,6 +1221,7 @@ static esp_err_t init_sdcard()
     sdmmc_host_t host = SDMMC_HOST_DEFAULT();
     host.flags = SDMMC_HOST_FLAG_1BIT;                       // using 1 bit mode
     host.max_freq_khz = SDMMC_FREQ_HIGHSPEED;
+    host.command_timeout_ms = 10000;
     diskspeed = host.max_freq_khz;
     sdmmc_slot_config_t slot_config = SDMMC_SLOT_CONFIG_DEFAULT();
     slot_config.width = 1;                                   // using 1 bit mode
@@ -1372,6 +1267,7 @@ static esp_err_t init_sdcard()
 //   another_pic_avi() - write one more frame of movie
 //   end_avi() - write the final parameters and close the file
 
+
 void make_avi( ) {
 
     if (PIR_ENABLED) {
@@ -1398,7 +1294,7 @@ void make_avi( ) {
                 }
             } else {
 
-                if ( recording == 0 && newfile == 0) {
+                if ( recording == 0 && newfile == 0 && videos++ < MAX_VIDEOS) {
 
                     //start a pir recording with current parameters, except no repeat and 15 seconds
                     Serial.println("Start a PIR");
@@ -1791,7 +1687,7 @@ static void another_save_avi() {
 
         totalw = totalw + millis() - bw;
 
-        digitalWrite(RED_LIGHT_PIN, HIGH);
+
 
     }
 } // end of another_pic_avi
@@ -1973,7 +1869,7 @@ void loop()
               delay(10000);                                     //   wait 10 seoonds for another event before sleep
               
               Serial.println("Trying again ..  to sleep now?" );
-              Serial.print("recording: "); Serial.println(recording);
+
 
               if (uploading == 0) {
 
@@ -1989,20 +1885,30 @@ void loop()
                   //rtc_gpio_hold_en(RED_LIGHT_PIN);
 
                   epoch_time = now();
-                  esp_sleep_enable_ext0_wakeup(PIR_PIN, 0);
-                  delay(500);
+
+                  if (videos >= MAX_VIDEOS) {
+                      esp_sleep_enable_timer_wakeup(10e6 * 300); /* 5 mins */
+                      delay(500);
+                  }
+                  else {
+                      esp_sleep_enable_ext0_wakeup(PIR_PIN, 0);
+                      delay(500);
+                  }
                   esp_deep_sleep_start();
+              }
+              else {
+                  Serial.println("Uploading started - not sleeping");
               }
           }
           else {
-              Serial.println("Uploading");
+              
           }
       }
       else {
-          Serial.println("Still recording");
+
       }
   }
-
+  Serial.printf("recording: %d, uploading: %d, AVI duration: %lu\n", recording, uploading, (bw - startms)/1000);
 
   delay(1000);
 }
