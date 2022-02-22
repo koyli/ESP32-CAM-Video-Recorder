@@ -238,7 +238,6 @@ const int avi_header[AVIOFFSET] PROGMEM = {
 
 TaskHandle_t CameraTask, AviWriterTask, uploadTask;
 SemaphoreHandle_t baton;
-SemaphoreHandle_t aviBaton;
 
 int counter = 0;
 
@@ -516,8 +515,6 @@ int uploadFile(File todo)
 
     String cofile = todo.readStringUntil('\n');
     /* strip /sdcard/ from front */
-
-    cofile = cofile.substring(strlen("/sdcard"));
 
     //    int bytes_sent = todo.readStringUntil('\n').toInt();
 
