@@ -186,8 +186,8 @@ int fb_out = 0;
 
 camera_fb_t * fb = NULL;
 
-FILE *avifile = NULL;
-FILE *idxfile = NULL;
+File avifile;
+File idxfile;
 
 
 #define AVIOFFSET 240 // AVI main header length
@@ -732,7 +732,7 @@ void codeForCameraTask( void * parameter )
 //
 // Writes an uint32_t in Big Endian at current file position
 //
-static void inline print_quartet(unsigned long i, FILE * fd)
+static void inline print_quartet(unsigned long i, File fd)
 {
     uint8_t y[4];
 //uint8_t x[1];
@@ -742,7 +742,7 @@ static void inline print_quartet(unsigned long i, FILE * fd)
   y[2] = (i >> 16) % 0x100;
   y[3] = (i >> 24) % 0x100;
 
-  fwrite(y , 1, 4, fd);
+  fd.write(y, 4);
 
 }
 
@@ -951,8 +951,15 @@ void print_wakeup_reason() {
 
 
 void codeForUploadTask(void *parameter) {
+
     Serial.print("UploadTask running on core ");
     Serial.println(xPortGetCoreID());
+    delay(20000);               /* don't do wifi straight away */
+    Serial.println("Initializing Wifi on uploadTask");
+    init_wifi();
+
+    Serial.print(WiFi.localIP());
+    Serial.println("' to connect");
 
     for (;;) {
         
@@ -994,6 +1001,8 @@ void setup() {
     //digitalWrite(GPIO_NUM_13, HIGH);
 
     videos = 0;
+
+    init_sdcard();
     
     Serial.setDebugOutput(true);
     Serial.print("setup, core ");  Serial.print(xPortGetCoreID());
@@ -1029,8 +1038,8 @@ void setup() {
     // SD camera init
 
     
-    card_err = init_sdcard();
     pinMode(GPIO_NUM_13, OUTPUT);
+    pinMode(GPIO_NUM_12, INPUT);
     digitalWrite(GPIO_NUM_13, HIGH);
 
 
@@ -1071,12 +1080,11 @@ void setup() {
 
     xTaskCreatePinnedToCore(codeForUploadTask,
                             "uploadTask",
-                            3072,
+                            8192,
                             NULL,
                             1,
                             &uploadTask,
                             0);
-                          
     delay(20);
 
     Serial.println("Starting camera ...");
@@ -1092,9 +1100,6 @@ void setup() {
 
     ready = 1;
     digitalWrite(RED_LIGHT_PIN, HIGH);         // red light turns off when setup is complete
-
-    Serial.print(WiFi.localIP());
-    Serial.println("' to connect");
 
     xTaskNotifyGive(AviWriterTask);
 
@@ -1150,11 +1155,6 @@ bool init_wifi()
     uint32_t brown_reg_temp = READ_PERI_REG(RTC_CNTL_BROWN_OUT_REG); //save WatchDog register
     Serial.print("\nBrownOut Regsiter was (in hex) "); Serial.println(brown_reg_temp, HEX);
     WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); //disable brownout detector
-
-    Serial.println("Using WM - go configure - if you haven't yet!");
-
-    bool res;
-    //wm.resetSettings();  // for debugging
 
     wifiMulti.addAP(WIFI_SSID_1, WIFI_ACCESSCODE_1);
     wifiMulti.addAP(WIFI_SSID_2, WIFI_ACCESSCODE_2);
@@ -1212,49 +1212,15 @@ bool init_wifi()
 
 
 
-static esp_err_t init_sdcard()
+static void init_sdcard()
 {
     Serial.println("Initializing SD Card");
     pinMode(GPIO_NUM_13, INPUT_PULLUP);
 
-    esp_err_t ret = ESP_FAIL;
-    sdmmc_host_t host = SDMMC_HOST_DEFAULT();
-    host.flags = SDMMC_HOST_FLAG_1BIT;                       // using 1 bit mode
-    host.max_freq_khz = SDMMC_FREQ_HIGHSPEED;
-    host.command_timeout_ms = 10000;
-    diskspeed = host.max_freq_khz;
-    sdmmc_slot_config_t slot_config = SDMMC_SLOT_CONFIG_DEFAULT();
-    slot_config.width = 1;                                   // using 1 bit mode
-    esp_vfs_fat_sdmmc_mount_config_t mount_config = {
-        .format_if_mount_failed = false,
-        .max_files = 8,
-    };
-
-    sdmmc_card_t *card;
-
-    ret = esp_vfs_fat_sdmmc_mount("/sdcard", &host, &slot_config, &mount_config, &card);
-
-    if (ret == ESP_OK) {
-        Serial.println("SD card mount successfully!");
-    }  else  {
-        Serial.printf("Failed to mount SD card VFAT filesystem. Error: %s", esp_err_to_name(ret));
-        Serial.println("Try again...");
-        delay(5000);
-        diskspeed = 400;
-        host.max_freq_khz = SDMMC_FREQ_PROBING;
-        ret = esp_vfs_fat_sdmmc_mount("/sdcard", &host, &slot_config, &mount_config, &card);
-        if (ret == ESP_OK) {
-            Serial.println("SD card mount successfully SLOW SLOW SLOW");
-        } else {
-            Serial.printf("Failed to mount SD card VFAT filesystem. Error: %s", esp_err_to_name(ret));
-            major_fail();
-        }
-    }
-    sdmmc_card_print_info(stdout, card);
     Serial.print("SD_MMC Begin: ");
-    Serial.println(SD_MMC.begin());   // required by ftp system ??
+    if (!SD_MMC.begin("/sdcard", true))
+        major_fail();   // required by ftp system ??
     pinMode(GPIO_NUM_13, INPUT_PULLDOWN);
-    return ret;
 }
 
 
@@ -1474,34 +1440,30 @@ static void start_avi() {
 
     //v99 - uxga 13, hd 11, svga 9, vga 8, cif 6
     if (framesize == 8) {
-        sprintf(fname, "/sdcard%s/%s_%s_vga_Q%d_I%d_L%d_S%d.avi", strftime_buf2, devname, strftime_buf, quality, capture_interval, xlength, xspeed);
+        sprintf(fname, "%s/%s_%s_vga_Q%d_I%d_L%d_S%d.avi", strftime_buf2, devname, strftime_buf, quality, capture_interval, xlength, xspeed);
     } else if (framesize == 9) {
-        sprintf(fname, "/sdcard%s/%s_%s_svga_Q%d_I%d_L%d_S%d.avi", strftime_buf2, devname,  strftime_buf, quality, capture_interval, xlength, xspeed);
+        sprintf(fname, "%s/%s_%s_svga_Q%d_I%d_L%d_S%d.avi", strftime_buf2, devname,  strftime_buf, quality, capture_interval, xlength, xspeed);
     } else if (framesize == 11) {
-        sprintf(fname, "/sdcard%s/%s_%s_hd_Q%d_I%d_L%d_S%d.avi", strftime_buf2, devname,  strftime_buf, quality, capture_interval, xlength, xspeed);
+        sprintf(fname, "%s/%s_%s_hd_Q%d_I%d_L%d_S%d.avi", strftime_buf2, devname,  strftime_buf, quality, capture_interval, xlength, xspeed);
     } else if (framesize == 13) {
-        sprintf(fname, "/sdcard%s/%s_%s_uxga_Q%d_I%d_L%d_S%d.avi", strftime_buf2, devname, strftime_buf, quality, capture_interval, xlength, xspeed);
+        sprintf(fname, "%s/%s_%s_uxga_Q%d_I%d_L%d_S%d.avi", strftime_buf2, devname, strftime_buf, quality, capture_interval, xlength, xspeed);
     } else  if (framesize == 6) {
-        sprintf(fname, "/sdcard%s/%s_%s_cif_Q%d_I%d_L%d_S%d.avi", strftime_buf2, devname, strftime_buf, quality, capture_interval, xlength, xspeed);
+        sprintf(fname, "%s/%s_%s_cif_Q%d_I%d_L%d_S%d.avi", strftime_buf2, devname, strftime_buf, quality, capture_interval, xlength, xspeed);
     } else {
         Serial.println("Wrong framesize");
     }
 
     Serial.print("\nFile name will be >"); Serial.print(fname); Serial.println("<");
 
-    avifile = fopen(fname, "w");
-    idxfile = fopen("/sdcard/idx.tmp", "w");
+    avifile = SD_MMC.open(fname, FILE_WRITE);
+    idxfile = SD_MMC.open("/idx.tmp", FILE_WRITE);
 
-    if (avifile != NULL)  {
-        //Serial.printf("File open: %s\n", fname);
-    }  else  {
+    if (!avifile) {
         Serial.println("Could not open file");
         major_fail();
     }
 
-    if (idxfile != NULL)  {
-        //Serial.printf("File open: %s\n", "/sdcard/idx.tmp");
-    }  else  {
+    if (!idxfile) {
         Serial.println("Could not open file");
         major_fail();
     }
@@ -1512,66 +1474,66 @@ static void start_avi() {
             buf[i] = ch;
         }
 
-    fwrite(buf, 1, AVIOFFSET, avifile);
+    avifile.write(buf, AVIOFFSET);
     //v99 - uxga 13, hd 11, svga 9, vga 8, cif 6
     if (framesize == 8) {
 
-        fseek(avifile, 0x40, SEEK_SET);
-        fwrite(vga_w, 1, 2, avifile);
-        fseek(avifile, 0xA8, SEEK_SET);
-        fwrite(vga_w, 1, 2, avifile);
-        fseek(avifile, 0x44, SEEK_SET);
-        fwrite(vga_h, 1, 2, avifile);
-        fseek(avifile, 0xAC, SEEK_SET);
-        fwrite(vga_h, 1, 2, avifile);
+        avifile.seek(0x40);
+        avifile.write(vga_w, 2);
+        avifile.seek(0xA8);
+        avifile.write(vga_w, 2);
+        avifile.seek(0x44);
+        avifile.write(vga_h, 2);
+        avifile.seek(0xAC);
+        avifile.write(vga_h, 2);
 
     } else if (framesize == 13) {
 
-        fseek(avifile, 0x40, SEEK_SET);
-        fwrite(uxga_w, 1, 2, avifile);
-        fseek(avifile, 0xA8, SEEK_SET);
-        fwrite(uxga_w, 1, 2, avifile);
-        fseek(avifile, 0x44, SEEK_SET);
-        fwrite(uxga_h, 1, 2, avifile);
-        fseek(avifile, 0xAC, SEEK_SET);
-        fwrite(uxga_h, 1, 2, avifile);
+        avifile.seek(0x40);
+        avifile.write(uxga_w, 2);
+        avifile.seek(0xA8);
+        avifile.write(uxga_w, 2);
+        avifile.seek(0x44);
+        avifile.write(uxga_h, 2);
+        avifile.seek(0xAC);
+        avifile.write(uxga_h, 2);
 
     } else if (framesize == 11) {
 
-        fseek(avifile, 0x40, SEEK_SET);
-        fwrite(hd_w, 1, 2, avifile);
-        fseek(avifile, 0xA8, SEEK_SET);
-        fwrite(hd_w, 1, 2, avifile);
-        fseek(avifile, 0x44, SEEK_SET);
-        fwrite(hd_h, 1, 2, avifile);
-        fseek(avifile, 0xAC, SEEK_SET);
-        fwrite(hd_h, 1, 2, avifile);
+        avifile.seek(0x40);
+        avifile.write(hd_w, 2);
+        avifile.seek(0xA8);
+        avifile.write(hd_w, 2);
+        avifile.seek(0x44);
+        avifile.write(hd_h, 2);
+        avifile.seek(0xAC);
+        avifile.write(hd_h, 2);
 
 
     } else if (framesize == 9) {
 
-        fseek(avifile, 0x40, SEEK_SET);
-        fwrite(svga_w, 1, 2, avifile);
-        fseek(avifile, 0xA8, SEEK_SET);
-        fwrite(svga_w, 1, 2, avifile);
-        fseek(avifile, 0x44, SEEK_SET);
-        fwrite(svga_h, 1, 2, avifile);
-        fseek(avifile, 0xAC, SEEK_SET);
-        fwrite(svga_h, 1, 2, avifile);
+        avifile.seek(0x40);
+        avifile.write(svga_w, 2);
+        avifile.seek(0xA8);
+        avifile.write(svga_w, 2);
+        avifile.seek(0x44);
+        avifile.write(svga_h, 2);
+        avifile.seek(0xAC);
+        avifile.write(svga_h, 2);
 
     }  else if (framesize == 6) {
 
-        fseek(avifile, 0x40, SEEK_SET);
-        fwrite(cif_w, 1, 2, avifile);
-        fseek(avifile, 0xA8, SEEK_SET);
-        fwrite(cif_w, 1, 2, avifile);
-        fseek(avifile, 0x44, SEEK_SET);
-        fwrite(cif_h, 1, 2, avifile);
-        fseek(avifile, 0xAC, SEEK_SET);
-        fwrite(cif_h, 1, 2, avifile);
+        avifile.seek(0x40);
+        avifile.write(cif_w, 2);
+        avifile.seek(0xA8);
+        avifile.write(cif_w, 2);
+        avifile.seek(0x44);
+        avifile.write(cif_h, 2);
+        avifile.seek(0xAC);
+        avifile.write(cif_h, 2);
     }
 
-    fseek(avifile, AVIOFFSET, SEEK_SET);
+    avifile.seek(AVIOFFSET);
 
     Serial.print(F("\nRecording "));
     Serial.print(total_frames);
@@ -1634,8 +1596,8 @@ static void another_save_avi() {
         uVideoLen += jpeg_size;
 
         bw = millis();
-        fwrite(dc_buf, 1, 4, avifile);
-        fwrite(zero_buf, 1, 4, avifile);
+        avifile.write(dc_buf, 4);
+        avifile.write(zero_buf, 4);
 
 
         int time_to_give_up = 0;
@@ -1646,7 +1608,7 @@ static void another_save_avi() {
             delay(100 + 5 * time_to_give_up);
         }
 
-        size_t err = fwrite(fb_q[fb_out]->buf, 1, fb_q[fb_out]->len, avifile);
+        size_t err = avifile.write(fb_q[fb_out]->buf, fb_q[fb_out]->len);
 
         time_to_give_up = 0;
         if (err != fb_q[fb_out]->len) {
@@ -1672,18 +1634,18 @@ static void another_save_avi() {
         jpeg_size = jpeg_size + remnant;
         movi_size = movi_size + remnant;
         if (remnant > 0) {
-            fwrite(zero_buf, 1, remnant, avifile);
+            avifile.write(zero_buf, remnant);
         }
 
-        fileposition = ftell (avifile);       // Here, we are at end of chunk (after padding)
-        fseek(avifile, fileposition - jpeg_size - 4, SEEK_SET);    // Here we are the the 4-bytes blank placeholder
+        fileposition = avifile.position();       // Here, we are at end of chunk (after padding)
+        avifile.seek(fileposition - jpeg_size - 4);    // Here we are the the 4-bytes blank placeholder
 
         print_quartet(jpeg_size, avifile);    // Overwrite placeholder with actual frame size (without padding)
 
-        fileposition = ftell (avifile);
+        fileposition = avifile.position();
 
 
-        fseek(avifile, fileposition + jpeg_size  , SEEK_SET);
+        avifile.seek(fileposition + jpeg_size);
 
         totalw = totalw + millis() - bw;
 
@@ -1711,7 +1673,7 @@ static void end_avi() {
 
     //Serial.print(" Write Q: "); Serial.print((fb_in + fb_max - fb_out) % fb_max); Serial.print(" in/out  "); Serial.print(fb_in); Serial.print(" / "); Serial.println(fb_out);
 
-    current_end = ftell (avifile);
+    current_end = avifile.position();
 
     Serial.println("End of avi - closing the files");
 
@@ -1723,27 +1685,27 @@ static void end_avi() {
 
     //Modify the MJPEG header from the beginning of the file, overwriting various placeholders
 
-    fseek(avifile, 4 , SEEK_SET);
+    avifile.seek(4);
     print_quartet(movi_size + 240 + 16 * frame_cnt + 8 * frame_cnt, avifile);
 
-    fseek(avifile, 0x20 , SEEK_SET);
+    avifile.seek(0x20);
     print_quartet(us_per_frame, avifile);
 
     unsigned long max_bytes_per_sec = movi_size * iAttainedFPS / frame_cnt;
 
-    fseek(avifile, 0x24 , SEEK_SET);
+    avifile.seek(0x24);
     print_quartet(max_bytes_per_sec, avifile);
 
-    fseek(avifile, 0x30 , SEEK_SET);
+    avifile.seek(0x30);
     print_quartet(frame_cnt, avifile);
 
-    fseek(avifile, 0x8c , SEEK_SET);
+    avifile.seek(0x8c);
     print_quartet(frame_cnt, avifile);
 
-    fseek(avifile, 0x84 , SEEK_SET);
+    avifile.seek(0x84);
     print_quartet((int)iAttainedFPS, avifile);
 
-    fseek(avifile, 0xe8 , SEEK_SET);
+    avifile.seek(0xe8);
     print_quartet(movi_size + frame_cnt * 8 + 4, avifile);
 
     Serial.println(F("\n*** Video recorded and saved ***\n"));
@@ -1768,46 +1730,44 @@ static void end_avi() {
 
     Serial.println("Writing the index");
 
-    fseek(avifile, current_end, SEEK_SET);
+    avifile.seek(current_end);
 
-    fclose(idxfile);
+    idxfile.close();
 
-    fwrite(idx1_buf, 1, 4, avifile);
+    avifile.write(idx1_buf, 4);
 
     print_quartet(frame_cnt * 16, avifile);
 
-    idxfile = fopen("/sdcard/idx.tmp", "r");
+    idxfile = SD_MMC.open("/idx.tmp", FILE_READ);
 
-    if (idxfile != NULL)  {
-        //Serial.printf("File open: %s\n", "/sdcard/idx.tmp");
-    }  else  {
+    if (!idxfile) {
         Serial.println("Could not open file");
         //major_fail();
     }
 
-    char * AteBytes;
-    AteBytes = (char*) malloc (8);
+    uint8_t * AteBytes;
+    AteBytes = (uint8_t*) malloc (8);
 
     for (int i = 0; i < frame_cnt; i++) {
-        fread ( AteBytes, 1, 8, idxfile);
-        fwrite(dc_buf, 1, 4, avifile);
-        fwrite(zero_buf, 1, 4, avifile);
-        fwrite(AteBytes, 1, 8, avifile);
+        idxfile.read(AteBytes, 8);
+        avifile.write(dc_buf, 4);
+        avifile.write(zero_buf, 4);
+        avifile.write(AteBytes, 8);
     }
 
     free(AteBytes);
-    fclose(idxfile);
-    fclose(avifile);
-    remove("/sdcard/idx.tmp");
+    idxfile.close();
+    avifile.close();
+    SD_MMC.remove("/idx.tmp");
 
     String fname_status = fname;
 
     fname_status = fname_status + String(".todo");
     
-    FILE* f = fopen(fname_status.c_str(), "w");
-    fwrite(fname, 1, strlen(fname), f);
-    fwrite("\n0\n", 1, 3, f);
-    fclose(f);
+    File f = SD_MMC.open(fname_status.c_str(), FILE_WRITE);
+    f.write((const uint8_t*)fname, strlen(fname));
+    f.write((const uint8_t*)"\n0\n", 3);
+    f.close();
 
     
     Serial.println("---");
@@ -1832,18 +1792,8 @@ static void do_fb() {
 void do_time() {
 
     if (WiFi.status() != WL_CONNECTED) {
-
-        Serial.println("***** WiFi reconnect *****");
-        WiFi.reconnect();
-        delay(5000);
-
-        if (WiFi.status() != WL_CONNECTED) {
-            Serial.println("***** WiFi rerestart *****");
-            init_wifi();
-        }
-        
-        MDNS.begin(devname);
-        sprintf(localip, "%s", WiFi.localIP().toString().c_str());
+        Serial.println("***** WiFi rerestart *****");
+        init_wifi();
     }
 
 }
