@@ -237,7 +237,7 @@ const int avi_header[AVIOFFSET] PROGMEM = {
 //
 
 TaskHandle_t CameraTask, AviWriterTask, uploadTask;
-SemaphoreHandle_t baton;
+SemaphoreHandle_t baton, uploadbaton;
 
 int counter = 0;
 
@@ -593,7 +593,7 @@ void codeForAviWriterTask( void * parameter )
     uint32_t ulNotifiedValue;
     Serial.print("aviwriter, core ");  Serial.print(xPortGetCoreID());
     Serial.print(", priority = "); Serial.println(uxTaskPriorityGet(NULL));
-
+    xSemaphoreTake(uploadbaton, portMAX_DELAY); 
     for (;;) {
         ulNotifiedValue = ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         while (ulNotifiedValue-- > 0)  {
@@ -755,16 +755,6 @@ WiFiEventId_t eventID;
 
 #define MAX_FRAMES (10 * 30)
 
-
-
-
-//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-//
-// blink functions - which turn on/off Blinding Disk-Active Light ... gently
-//
-
-hw_timer_t * timer = NULL;
-
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 //
 // print_ram - debugging function for show heap total and in tasks, loops through priority tasks
@@ -891,6 +881,7 @@ void deleteFolderOrFile(const char * val) {
       Serial.println("Delete failed");
     }
   }
+  xSemaphoreGive(uploadbaton);
 }
 
 
@@ -951,16 +942,23 @@ void codeForUploadTask(void *parameter) {
 
     Serial.print("UploadTask running on core ");
     Serial.println(xPortGetCoreID());
-    delay(20000);               /* don't do wifi straight away */
+
+    delay(10000);
+    xSemaphoreTake(uploadbaton, portMAX_DELAY);
+        
     Serial.println("Initializing Wifi on uploadTask");
     init_wifi();
 
+
+    
     Serial.print(WiFi.localIP());
     Serial.println("' to connect");
-
-    for (;;) {
+    xSemaphoreGive(uploadbaton);
         
+    for (;;) {
+        xSemaphoreTake(uploadbaton, portMAX_DELAY);
         do_time();
+
         if (WiFi.status() == WL_CONNECTED) {
             Serial.println("Wifi connected - will attempt upload");
             upload();
@@ -968,6 +966,7 @@ void codeForUploadTask(void *parameter) {
         else {
             Serial.println("No wifi - skipping upload");
         }
+        xSemaphoreGive(uploadbaton);
         delay(15 * 1000);
     }
 }
@@ -1053,6 +1052,7 @@ void setup() {
     Serial.println("Starting tasks ...");
 
     baton = xSemaphoreCreateMutex();  // baton controls access to camera and frame queue
+    uploadbaton = xSemaphoreCreateMutex();  // baton controls access to camera and frame queue
 
     xTaskCreatePinnedToCore(
                             codeForCameraTask,
@@ -1315,7 +1315,7 @@ void make_avi( ) {
                     digitalWrite(RED_LIGHT_PIN, LOW);                                                       // close the file
 
                     end_avi();
-
+                    xSemaphoreGive(uploadbaton);
                     frames_so_far = 0;
                     newfile = 0;          // file is closed
                     if (repeat > 0) {
@@ -1573,6 +1573,8 @@ static void another_save_avi() {
 
     xSemaphoreTake( baton, portMAX_DELAY );
 
+    
+
     if (fb_in == fb_out) {        // nothing to do
 
         xSemaphoreGive( baton );
@@ -1606,7 +1608,6 @@ static void another_save_avi() {
         }
 
         size_t err = avifile.write(fb_q[fb_out]->buf, fb_q[fb_out]->len);
-
         time_to_give_up = 0;
         if (err != fb_q[fb_out]->len) {
             Serial.print("Error on avi write: bytes_written = "); Serial.print(err);
@@ -1649,6 +1650,8 @@ static void another_save_avi() {
 
 
     }
+
+
 } // end of another_pic_avi
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1813,7 +1816,7 @@ void loop()
 
           if (PIR_ENABLED && uploading == 0) {
 
-              delay(10000);                                     //   wait 10 seoonds for another event before sleep
+              delay(30000);                                     //   wait 10 seoonds for another event before sleep
               
               Serial.println("Trying again ..  to sleep now?" );
 
@@ -1834,6 +1837,7 @@ void loop()
                   epoch_time = now();
 
                   if (videos >= MAX_VIDEOS) {
+                      Serial.println("Too many videos - sleeping for 5 mins");
                       esp_sleep_enable_timer_wakeup(10e6 * 300); /* 5 mins */
                       delay(500);
                   }
