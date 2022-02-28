@@ -4,22 +4,55 @@
 #include "mbedtls/md.h"
 #include "credentials.h"
 
-#include <WiFiUdp.h>
-#include <ArduinoJson.h>
+#include <WiFi.h>
+#include <WiFiMulti.h>
 #include <ESPmDNS.h>
-#include <Update.h>
+#include <WiFiUdp.h>
 #include <ArduinoOTA.h>
 
 #include <time.h>
 #include <TimeLib.h>
-//#define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE
 #include "esp_log.h"
 #include "esp_camera.h"
+#define digitalWrite(a,b) {Serial.print("Writing: ");Serial.print(a);Serial.print(",");Serial.println(b);digitalWrite(a,b);}
+
+// MicroSD
+#include <SD_MMC.h>
+
+#include "driver/rtc_io.h"
+
+
+#include "esp_task_wdt.h"
+static const char devname[] = "desklens";         // name of your camera for mDNS, Router, and filenames
+
+
+// https://sites.google.com/a/usapiens.com/opnode/time-zones  -- find your timezone here
+#define TIMEZONE "GMT0BST,M3.5.0/01,M10.5.0/02"             // your timezone  -  this is GMT
+
+
+// reboot startup parameters here
+
+#define DEEP_SLEEP_PIR 1            // set to 1 to deepsleep between pir videos
+#define RECORD_ON_REBOOT 1          // set to 1 to record, or 0 to NOT record on reboot
+
+#define PIR_ENABLED 1
+
+// here are 2 sets of startup parameters -- more down in the stop and restart webpage
+
+// VGA 10 fps for 30 minutes, and repeat, play at real time
+
+#define GRAY 0                     //  not gray
+#define QUALITY 12                //  quality on the 10..50 subscale - 10 is good, 20 is grainy and smaller files, 12 is better in bright sunshine due to clipping
+#define CAPTURE_INTERVAL 100       //  milli-seconds between frames
+#define TOTAL_FRAMES_CONFIG 30;  //  how many frames - length of movie in ms is total_frames x capture_interval
+
+
 
 #define RED_LIGHT_PIN GPIO_NUM_33
 #define WHITE_LIGHT_PIN GPIO_NUM_4
 
 #define PIR_PIN GPIO_NUM_12                   // for active high pir or microwave etc
+#define IR_LED_PIN GPIO_NUM_13
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 //  edit parameters for wifi name, startup parameters in the local file settings.h
@@ -30,7 +63,7 @@ RTC_DATA_ATTR unsigned int epoch_time = 0;
 
 
 framesize_t  framesize = (framesize_t) 8;                //  13 UXGA, 11 HD, 9 SVGA, 8 VGA, 6 CIF
-int xspeed = XSPEED;
+int xspeed = 1;                                          /* speed up of record */
 
 int doUpload = 0;
 int quality = QUALITY;
@@ -63,14 +96,12 @@ int count_avi = 0;
 int count_cam = 0;
 
 int  xlength = total_frames_config * capture_interval / 1000;
-int repeat = REPEAT_CONFIG;
 int total_frames = total_frames_config;
 
 int recording = 0;
 int uploading = 0;
 
 int PIRrecording = 0;
-int ready = 0;
 
 
 
@@ -81,27 +112,12 @@ int ready = 0;
 
 
 
-#include <WiFi.h>
-#include <WiFiMulti.h>
-#include <ESPmDNS.h>
 WiFiMulti wifiMulti;
 bool InternetFailed = false;
 
 int diskspeed = 0;
 char fname[130];
 
-#include <ESPmDNS.h>
-
-
-// Time
-#include "time.h"
-
-// MicroSD
-#include "driver/sdmmc_host.h"
-#include "driver/sdmmc_defs.h"
-#include "sdmmc_cmd.h"
-#include "esp_vfs_fat.h"
-#include <SD_MMC.h>
 
 long current_millis;
 long last_capture_millis = 0;
@@ -237,7 +253,7 @@ const int avi_header[AVIOFFSET] PROGMEM = {
 //
 
 TaskHandle_t CameraTask, AviWriterTask, uploadTask;
-SemaphoreHandle_t baton, uploadbaton;
+SemaphoreHandle_t baton;
 
 int counter = 0;
 
@@ -593,7 +609,6 @@ void codeForAviWriterTask( void * parameter )
     uint32_t ulNotifiedValue;
     Serial.print("aviwriter, core ");  Serial.print(xPortGetCoreID());
     Serial.print(", priority = "); Serial.println(uxTaskPriorityGet(NULL));
-    xSemaphoreTake(uploadbaton, portMAX_DELAY); 
     for (;;) {
         ulNotifiedValue = ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         while (ulNotifiedValue-- > 0)  {
@@ -643,7 +658,7 @@ void codeForCameraTask( void * parameter )
 
                 do {
 
-                    digitalWrite(GPIO_NUM_13, HIGH);
+                    digitalWrite(IR_LED_PIN, HIGH);
 
                     fb_q[fb_in] = esp_camera_fb_get();
                     int x = fb_q[fb_in]->len;
@@ -748,38 +763,10 @@ static void inline print_quartet(unsigned long i, File fd)
 char localip[20];
 WiFiEventId_t eventID;
 
-#include "soc/soc.h"
-#include "soc/rtc_cntl_reg.h"
-#include "driver/rtc_io.h"
 
 
 #define MAX_FRAMES (10 * 30)
 
-//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-//
-// print_ram - debugging function for show heap total and in tasks, loops through priority tasks
-//
-
-void print_ram() {
-  Serial.println("cam / avi / loop ");
-  Serial.print(count_cam); Serial.print(" / ");
-  Serial.print(count_avi); Serial.print(" / ");
-
-  Serial.printf("Internal Total heap %d, internal Free Heap %d\n", ESP.getHeapSize(), ESP.getFreeHeap());
-  Serial.printf("SPIRam Total heap   %d, SPIRam Free Heap   %d\n", ESP.getPsramSize(), ESP.getFreePsram());
-
-  Serial.printf("ChipRevision %d, Cpu Freq %d, SDK Version %s\n", ESP.getChipRevision(), ESP.getCpuFreqMHz(), ESP.getSdkVersion());
-  //Serial.printf(" Flash Size %d, Flash Speed %d\n",ESP.getFlashChipSize(), ESP.getFlashChipSpeed());
-
-  if (ready) {
-    Serial.println("Avi Writer / Camera ");
-    Serial.print  (uxTaskGetStackHighWaterMark(AviWriterTask));
-    Serial.print  (" / "); Serial.print  (uxTaskGetStackHighWaterMark(CameraTask));
-  }
-
-
-  Serial.println("----");
-}
 
 
 
@@ -791,10 +778,6 @@ void print_ram() {
 //  code copied from user @gemi254
 
 void delete_old_stuff() {
-    if (!DELETE_OLD_FILES) {
-        Serial.println("Not deleting - configured not to delete old files");
-        return;
-    }
   Serial.printf("Total space: %lluMB\n", SD_MMC.totalBytes() / (1024 * 1024));
   Serial.printf("Used space: %lluMB\n", SD_MMC.usedBytes() / (1024 * 1024));
 
@@ -881,34 +864,9 @@ void deleteFolderOrFile(const char * val) {
       Serial.println("Delete failed");
     }
   }
-  xSemaphoreGive(uploadbaton);
+
 }
 
-
-//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-//
-// setup() runs on cpu 1
-//
-
-#include <stdio.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "esp_system.h"
-#include "nvs_flash.h"
-#include "nvs.h"
-#include "soc/soc.h"
-#include "soc/cpu.h"
-#include "soc/rtc_cntl_reg.h"
-
-#include "esp_task_wdt.h"
-
-#ifdef CONFIG_BROWNOUT_DET_LVL
-#define BROWNOUT_DET_LVL CONFIG_BROWNOUT_DET_LVL
-#else
-#define BROWNOUT_DET_LVL 5
-#endif //CONFIG_BROWNOUT_DET_LVL
-
-#define CONFIG_BROWNOUT_DET_LVL_SEL_5 1
 
 
 
@@ -943,8 +901,7 @@ void codeForUploadTask(void *parameter) {
     Serial.print("UploadTask running on core ");
     Serial.println(xPortGetCoreID());
 
-    delay(10000);
-    xSemaphoreTake(uploadbaton, portMAX_DELAY);
+    delay(10000);               /* wait 10  */
         
     Serial.println("Initializing Wifi on uploadTask");
     init_wifi();
@@ -953,10 +910,8 @@ void codeForUploadTask(void *parameter) {
     
     Serial.print(WiFi.localIP());
     Serial.println("' to connect");
-    xSemaphoreGive(uploadbaton);
         
     for (;;) {
-        xSemaphoreTake(uploadbaton, portMAX_DELAY);
         do_time();
 
         if (WiFi.status() == WL_CONNECTED) {
@@ -966,7 +921,6 @@ void codeForUploadTask(void *parameter) {
         else {
             Serial.println("No wifi - skipping upload");
         }
-        xSemaphoreGive(uploadbaton);
         delay(15 * 1000);
     }
 }
@@ -992,9 +946,7 @@ void setup() {
     pinMode(WHITE_LIGHT_PIN, OUTPUT);               // Blinding Disk-Avtive Light
     digitalWrite(WHITE_LIGHT_PIN, LOW);             // turn off
 
-    rtc_gpio_hold_dis(GPIO_NUM_13);
-    //pinMode(GPIO_NUM_13, OUTPUT);
-    //digitalWrite(GPIO_NUM_13, HIGH);
+
 
     videos = 0;
 
@@ -1034,9 +986,9 @@ void setup() {
     // SD camera init
 
     
-    pinMode(GPIO_NUM_13, OUTPUT);
-    pinMode(GPIO_NUM_12, INPUT);
-    digitalWrite(GPIO_NUM_13, HIGH);
+    pinMode(IR_LED_PIN, OUTPUT);
+    pinMode(PIR_PIN, INPUT);
+    digitalWrite(IR_LED_PIN, HIGH);
 
 
     if (card_err != ESP_OK) {
@@ -1048,11 +1000,10 @@ void setup() {
     Serial.printf("Total space: %lluMB\n", SD_MMC.totalBytes() / (1024 * 1024));
     Serial.printf("Used space: %lluMB\n", SD_MMC.usedBytes() / (1024 * 1024));
 
-    //plm print_ram();  delay(2000);
+
     Serial.println("Starting tasks ...");
 
     baton = xSemaphoreCreateMutex();  // baton controls access to camera and frame queue
-    uploadbaton = xSemaphoreCreateMutex();  // baton controls access to camera and frame queue
 
     xTaskCreatePinnedToCore(
                             codeForCameraTask,
@@ -1086,23 +1037,20 @@ void setup() {
 
     Serial.println("Starting camera ...");
 
-    recording = 0;  // we are NOT recording
     config_camera();
 
     newfile = 0;    // no file is open  // don't fiddle with this!
 
     recording = RECORD_ON_REBOOT;
+    digitalWrite(IR_LED_PIN, recording ? HIGH : LOW);
 
-    //plm print_ram();  delay(2000);
 
-    ready = 1;
     digitalWrite(RED_LIGHT_PIN, HIGH);         // red light turns off when setup is complete
 
     xTaskNotifyGive(AviWriterTask);
 
     delay(1000);
 
-    print_ram();
 
     delete_old_stuff();
 }
@@ -1202,7 +1150,6 @@ bool init_wifi()
     Serial.println(" Enable brownout");
     WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, brown_reg_temp); //enable brownout detector
 
-
     return true;
 }
 
@@ -1212,12 +1159,12 @@ bool init_wifi()
 static void init_sdcard()
 {
     Serial.println("Initializing SD Card");
-    pinMode(GPIO_NUM_13, INPUT_PULLUP);
+    pinMode(IR_LED_PIN, INPUT_PULLUP);
 
     Serial.print("SD_MMC Begin: ");
     if (!SD_MMC.begin("/sdcard", true))
         major_fail();   // required by ftp system ??
-    pinMode(GPIO_NUM_13, INPUT_PULLDOWN);
+    pinMode(IR_LED_PIN, INPUT_PULLDOWN);
 }
 
 
@@ -1237,10 +1184,10 @@ void make_avi( ) {
 
         int PIRstatus = digitalRead(PIR_PIN);
         if (DEEP_SLEEP_PIR && millis() < 15000 ) {
-            PIRstatus  = 0;
+            PIRstatus  = 1;
         }
 
-        if (PIRstatus == 0) {
+        if (PIRstatus == 1) {
             if (PIRrecording == 1) {
                 // keep recording for 15 more seconds
                 if ( (millis() - startms) > (total_frames * capture_interval - 5000)
@@ -1262,10 +1209,11 @@ void make_avi( ) {
                     //start a pir recording with current parameters, except no repeat and 15 seconds
                     Serial.println("Start a PIR");
                     PIRrecording = 1;
-                    repeat = 0;
                     total_frames = 15000 / capture_interval;
                     xlength = total_frames * capture_interval / 1000;
                     recording = 1;
+                    digitalWrite(IR_LED_PIN, HIGH);
+                  
                 }
             }
         }
@@ -1274,7 +1222,7 @@ void make_avi( ) {
     // we are recording, but no file is open
 
     if (newfile == 0 && recording == 1) {                                     // open the file
-        digitalWrite(GPIO_NUM_13, HIGH);
+        digitalWrite(IR_LED_PIN, HIGH);
         digitalWrite(RED_LIGHT_PIN, HIGH);
         newfile = 1;
 
@@ -1290,7 +1238,6 @@ void make_avi( ) {
 
         if (newfile == 1 && recording == 0) {                                  // got command to close file
 
-            digitalWrite(RED_LIGHT_PIN, LOW);
             end_avi();
 
             Serial.println("Done capture due to command");
@@ -1298,7 +1245,8 @@ void make_avi( ) {
             frames_so_far = total_frames;
 
             newfile = 0;    // file is closed
-            recording = 0;  // DO NOT start another recording
+           recording = 0;  // DO NOT start another recording
+            digitalWrite(IR_LED_PIN, LOW);
             PIRrecording = 0;
 
         } else {
@@ -1315,17 +1263,12 @@ void make_avi( ) {
                     digitalWrite(RED_LIGHT_PIN, LOW);                                                       // close the file
 
                     end_avi();
-                    xSemaphoreGive(uploadbaton);
                     frames_so_far = 0;
                     newfile = 0;          // file is closed
-                    if (repeat > 0) {
-                        recording = 1;        // start another recording
-                        repeat = repeat - 1;
-                        xTaskNotifyGive(AviWriterTask);
-                    } else {
-                        recording = 0;
-                        PIRrecording = 0;
-                    }
+                    recording = 0;
+                    PIRrecording = 0;
+                    digitalWrite(IR_LED_PIN, LOW);;
+                    
 
                 } else  {                                                            // regular
 
@@ -1409,9 +1352,7 @@ static void start_avi() {
 
     Serial.println("Starting an avi ");
 
-    //plm print_ram();
 
-    //89 config_camera();
     time_t n = time(nullptr);
     bool fixTime = false; 
     if (time(nullptr) < 100000) {
@@ -1824,15 +1765,14 @@ void loop()
               if (uploading == 0) {
 
                   Serial.println("Going to sleep now");
-                  digitalWrite(GPIO_NUM_13, LOW);
-                  gpio_hold_en(GPIO_NUM_13);
+                  digitalWrite(IR_LED_PIN, LOW);
+                  gpio_hold_en(IR_LED_PIN);
                   
                   pinMode(WHITE_LIGHT_PIN, OUTPUT);
                   digitalWrite(WHITE_LIGHT_PIN, LOW);
                   rtc_gpio_hold_en(WHITE_LIGHT_PIN);
                   gpio_deep_sleep_hold_en();
                   digitalWrite(RED_LIGHT_PIN, HIGH);
-                  //rtc_gpio_hold_en(RED_LIGHT_PIN);
 
                   epoch_time = now();
 
@@ -1842,7 +1782,7 @@ void loop()
                       delay(500);
                   }
                   else {
-                      esp_sleep_enable_ext0_wakeup(PIR_PIN, 0);
+                      esp_sleep_enable_ext0_wakeup(PIR_PIN, 1); /* wake on high */
                       delay(500);
                   }
                   esp_deep_sleep_start();
