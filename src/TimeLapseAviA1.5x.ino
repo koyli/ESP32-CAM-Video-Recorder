@@ -831,14 +831,15 @@ bool init_wifi()
             delay(500);
         }
 
-    setTime(time(nullptr));
-
     if (!MDNS.begin(devname)) {
         Serial.println("Error setting up MDNS responder!");
     } else {
         Serial.printf("mDNS responder started '%s'\n", devname);
     }
     
+    Serial.print("Setting up NTP.. existing time is ");
+    printLocalTime();
+
     configTime(0, 0, "pool.ntp.org");
 
     setenv("TZ", TIMEZONE, 1);  // mountain time zone from #define at top
@@ -846,24 +847,20 @@ bool init_wifi()
     
     timeinfo = { 0 };
     delay(1000);
-    
-    time_t n = now();
-    localtime_r(&n, &timeinfo);
-    Serial.print("Local time: "); Serial.println(ctime(&n));
+
     sprintf(localip, "%s", WiFi.localIP().toString().c_str());
     
     while(time(nullptr) < 100000) {
         Serial.print("t");
         delay(100);
     }
-    printLocalTime();
     setTime(time(nullptr));
     unsigned long t = now();
     
     char buf1[20];
     
-    sprintf(buf1, "%04d%02d%02dT%02d%02d%02dZ",  year(t),month(t), day(t), hour(t), minute(t), second(t));
     Serial.println(buf1);
+    printLocalTime();
  
 
     Serial.println(" Enable brownout");
