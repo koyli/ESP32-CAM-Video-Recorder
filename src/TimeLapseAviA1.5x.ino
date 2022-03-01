@@ -129,7 +129,6 @@ long totalp;
 long totalw;
 float avgp;
 float avgw;
-int overtime_count = 0;
 unsigned long nothing_cam = 0;
 unsigned long nothing_avi = 0;
 
@@ -626,15 +625,10 @@ void codeForUploadTask(void *parameter) {
     Serial.print("UploadTask running on core ");
     Serial.println(xPortGetCoreID());
 
-    delay(10000);               /* wait 10  */
+    delay(5000);               /* wait 10  */
         
     Serial.println("Initializing Wifi on uploadTask");
-    init_wifi();
 
-
-    
-    Serial.print(WiFi.localIP());
-    Serial.println("' to connect");
         
     for (;;) {
         do_time();
@@ -1206,7 +1200,6 @@ static void start_avi() {
     bigdelta = millis();
     totalp = 0;
     totalw = 0;
-    overtime_count = 0;
     jpeg_size = 0;
     movi_size = 0;
     uVideoLen = 0;
@@ -1469,8 +1462,6 @@ void do_time() {
 // some globals for the loop()
 //
 
-long wakeup;
-long last_wakeup = 0;
 
 void loop()
 {
