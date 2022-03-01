@@ -98,18 +98,9 @@ int uploading = 0;
 int PIRrecording = 0;
 
 
-
-
-
-
-
-
-
-
 WiFiMulti wifiMulti;
 bool InternetFailed = false;
 
-int diskspeed = 0;
 char fname[130];
 
 
