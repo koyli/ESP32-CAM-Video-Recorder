@@ -4,13 +4,9 @@
 #include <WiFi.h>
 #include <WiFiMulti.h>
 #include <ESPmDNS.h>
-#include <WiFiUdp.h>
-#include <ArduinoOTA.h>
 #include <esp32-aws-s3.h>
 
-#include <time.h>
 #include <TimeLib.h>
-#include "esp_log.h"
 #include "esp_camera.h"
 #define digitalWrite(a,b) {Serial.print("Writing: ");Serial.print(a);Serial.print(",");Serial.println(b);digitalWrite(a,b);}
 
